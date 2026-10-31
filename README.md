@@ -243,7 +243,7 @@ The nominal script runs:
 | Liftoff, max-q, landing | 5 deg step at 1 s | 15 m/s at 14 s | Three curves on top of each other. Gimbal a few degrees. Rate under 20 deg/s. |
 | Liftoff, 30 deg, governor off | 30 deg step | off | The before case. Gimbal rate sits on ±20 deg/s for about 1.7 s and the angle reaches the ±15 deg stop. Pitch ends near 29.5 deg. |
 | Liftoff, 30 deg, governor on | 30 deg step | off | The after case. Peak gimbal about 6.7 deg, peak rate about 18 deg/s, neither stop touched. Pitch ends near 30.6 deg. |
-| Load relief, `lr_blend` 0 to 1 | hold 0 deg, trajectory `mu(t)` | shear 12 m/s plus 9 m/s 1-cosine | q·alpha falls and lateral drift rises as the knob goes from 0 to 1. Gimbal stays near 0. |
+| Load relief, `lr_blend` 0 to 1, correction on and off | hold 0 deg through T+143 s | shear 12 m/s plus 9 m/s 1-cosine | q·alpha falls as the knob rises. After max-q the lateral PD pulls drift back. Gimbal stays near 0. |
 | Max-q trim | hold 0 deg | off | 0.5 deg misalignment at 2 s. Gimbal settles near −0.5 deg. Pitch returns toward 0. |
 
 Solver: `ode45`, relative tolerance `1e-6`, max step 5 ms, stop time from `tStop`.
