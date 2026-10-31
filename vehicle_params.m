@@ -10,10 +10,11 @@ function V = vehicle_params()
 %
 %   The companion integrates the stack as a point mass and only gives the
 %   booster a rigid-body pitch model after separation (uniform rod,
-%   I = m*L^2/12, gimbal arm = L/2, instantaneous gimbal). This file keeps
-%   that inertia model, extends it to the full stack for liftoff and max-q,
-%   and adds the actuator, delay and aerodynamic moment the companion leaves
-%   out. Those additions are named below as design assumptions.
+%   I = m*L^2/12, gimbal arm = L/2, instantaneous gimbal). The three flight
+%   conditions below replace that rod with vehicle_mass_properties: LOX and
+%   CH4 tanks, a moving CG, and a body-fixed centre of pressure. Actuator,
+%   delay and the aerodynamic slope are still the design assumptions named
+%   below. Slosh and bending are built on top of the same mass properties.
 %
 %   V.flight is the three frozen conditions the controller is scheduled on.
 %   Edit the knobs in the "design assumptions" section, then re-run
@@ -154,16 +155,31 @@ flight.thrust = in.throttle * in.nEng * B.Teng;          % [N]
 flight.weight = in.mass * V.g0;
 flight.thrustToWeight = flight.thrust / flight.weight;
 
-flight.inertia = in.mass * in.length^2 / 12;             % uniform rod [kg*m^2]
-flight.arm = in.length / 2;                              % CG at mid-length [m]
-flight.mu = flight.thrust * flight.arm * V.gimbalThrustFraction ...
-    / flight.inertia;                                    % [rad/s^2 per rad]
-
 [flight.density, flight.q] = dynamic_pressure(in.altitude, in.speed);
-% lcp > 0 means the CP is ahead of the CG (unstable), in metres.
-flight.lcp = -in.staticMarginCal * V.diam;
-flight.aeroMomentPerAlpha = flight.q * V.CNa * V.area * flight.lcp;  % [N*m/rad]
-flight.lambda = flight.aeroMomentPerAlpha / flight.inertia;          % [1/s^2]
+% staticMarginCal places the CP (the margin the rod model used at
+% mid-length). vehicle_mass_properties then moves the CG with the tanks
+% and returns the margin, arm and inertia that actually fly.
+if in.length >= V.stackLength - 1
+    config = "stack";
+else
+    config = "booster";
+end
+mp = vehicle_mass_properties(in.mass, flight.thrust, flight.q, config, V, ...
+    in.staticMarginCal);
+bd = bending_model(mp, V);
+flight.config = config;
+flight.massProps = mp;
+flight.cgFromNose = mp.cg;
+flight.cpFromNose = mp.xCp;
+flight.inertia = mp.I;
+flight.arm = mp.arm;
+flight.lcp = mp.lcp;                                     % >0: CP ahead of CG
+flight.staticMarginCal = mp.staticMarginCal;
+flight.aeroMomentPerAlpha = flight.q * V.CNa * V.area * flight.lcp;
+flight.mu = mp.mu;
+flight.lambda = mp.lambda;
+flight.bendWn = [bd.wn];
+flight.bendHz = [bd.hz];
 if flight.lambda > 0
     flight.unstablePole = sqrt(flight.lambda);           % [rad/s]
 else
