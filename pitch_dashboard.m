@@ -54,6 +54,10 @@ build_bode(tabBode, D, colors);
 build_large(tabLarge, D, simBefore, simAfter, colors);
 build_disturbances(tabDist, D, simMis, colors);
 build_flight(tabFlight, D, schedule, traj);
+if isfield(D, 'structure') && ~isempty(D.structure)
+    tabStruct = uitab(tabs, 'Title', 'Structure & slosh');
+    structure_dashboard_tab(tabStruct, D.structure);
+end
 
 fig.Visible = 'on';
 try
@@ -126,8 +130,14 @@ end
 
 
 function build_stats(parent, D, runs, extras)
-g = uigridlayout(parent, [2 1]);
-g.RowHeight = {100, '1x'};
+hasStructure = isfield(D, 'structure') && ~isempty(D.structure);
+if hasStructure
+    g = uigridlayout(parent, [3 1]);
+    g.RowHeight = {100, '1x', 280};
+else
+    g = uigridlayout(parent, [2 1]);
+    g.RowHeight = {100, '1x'};
+end
 g.ColumnWidth = {'1x'};
 g.Padding = [12 10 12 10];
 g.RowSpacing = 6;
@@ -147,6 +157,9 @@ uit = uitable(g, 'Data', cells_for_uitable(stats_table(D, runs, extras)), ...
     'ColumnSortable', true, 'RowName', {}, 'FontSize', 11);
 uit.Layout.Row = 2;
 uit.Layout.Column = 1;
+if hasStructure
+    structure_stats_block(g, D.structure);
+end
 end
 
 
@@ -264,7 +277,8 @@ axMg = next_ax(tl);
 axDr = next_ax(tl, [1 2]);
 flight = match_flight(D, simMis.name);
 tLin = (0:0.02:(simMis.tStop - simMis.misalignTime))';
-y = step_delay(flight.Tdist * flight.mu * deg2rad(simMis.misalignDeg), tLin);
+y = step_delay(response_model(flight, 'TdistNotch', 'Tdist') ...
+    * flight.mu * deg2rad(simMis.misalignDeg), tLin);
 c = colors(2, :);
 plot(axMp, simMis.t, simMis.thetaDeg, 'Color', c, 'LineWidth', 1.3);
 hold(axMp, 'on');
@@ -531,7 +545,7 @@ end
 
 function [tCmd, yDeg] = linear_command(flight, run)
 tLin = (0:0.02:(run.tStop - run.thetaStepTime))';
-y = step_delay(flight.Tcmd, tLin);
+y = step_delay(response_model(flight, 'TcmdNotch', 'Tcmd'), tLin);
 tCmd = tLin + run.thetaStepTime;
 yDeg = y * run.thetaStepDeg;
 end
@@ -539,7 +553,8 @@ end
 
 function [t, yDeg] = linear_gust(flight, gustSpeed)
 t = (0:0.05:40)';
-y = step_delay(flight.Tdist * flight.gustAccPerWind * gustSpeed, t);
+y = step_delay(response_model(flight, 'TdistNotch', 'Tdist') ...
+    * flight.gustAccPerWind * gustSpeed, t);
 yDeg = rad2deg(y);
 end
 
@@ -645,6 +660,15 @@ if isempty(t)
 end
 plot(ax, [t(1) t(end)], [lim lim], 'k:', 'HandleVisibility', 'off');
 plot(ax, [t(1) t(end)], [-lim -lim], 'k:', 'HandleVisibility', 'off');
+end
+
+
+function sys = response_model(flight, primary, fallback)
+if isfield(flight, primary) && ~isempty(flight.(primary))
+    sys = flight.(primary);
+else
+    sys = flight.(fallback);
+end
 end
 
 

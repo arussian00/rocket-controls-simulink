@@ -74,6 +74,12 @@ assign('gustAccPerWind', flight.gustAccPerWind);
 assign('misalignTime', opts.misalignTime);
 assign('misRad', deg2rad(opts.misalignDeg));
 
+% Bending notch on sensed pitch and rate. Unit gain if this flight has
+% no bendWn, so a diagram built before the mass model still simulates.
+[notchNum, notchDen] = notch_for_flight(flight);
+assign('notchNum', notchNum);
+assign('notchDen', notchDen);
+
 assign('pitchConditionName', char(name));
 end
 
