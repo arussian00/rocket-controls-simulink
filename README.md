@@ -266,6 +266,7 @@ This repo was written and the algebra was checked with NumPy (frequency response
 4. **30 deg liftoff.** On Limits and disturbances, gimbal and gimbal rate both sit on their limits for part of the run. Pitch still heads toward 30 deg, more slowly than the 5 deg case. The checklist says both limits were reached.
 5. **Misalignment and drift.** On that same tab, gimbal ends near −0.5 deg and the dashed linear pitch is close to the solid one. The uncontrolled max-q trace walks away from 1 deg, and the closed-loop trace holds.
 6. **Bode tab.** Three loop gains, circles at the gain crossover, squares at the upward gain-margin frequency, legend showing about 60 deg and 21 dB.
+6b. **Along the flight.** The scheduled curve stays near 60 deg and 21 dB. The fixed liftoff-gain curve drops under the red floor in boostback (worst about 16 deg and 2.7 dB near t = 185 s) and is also under 6 dB at brake ignition. The printed worst-case lines should match that picture within a few tenths.
 7. **Apps.** `open_pitch_tuner("pid", "max-q")` opens PID Tuner. `open_pitch_tuner("designer", "liftoff")` opens Control System Designer. The plant is SISO, stable in closed loop, phase margin near 60 deg.
 8. **Model.** `open_system("boosterPitchTVC")` shows Controller, Actuator and Plant. Scopes exist. Pressing Run with a fresh MATLAB session (no variables) still simulates liftoff, because of `pitch_model_init`.
 
