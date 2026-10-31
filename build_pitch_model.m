@@ -9,9 +9,10 @@ function mdl = build_pitch_model()
 %                     ^                                           |
 %                     +---------------- theta, q -----------------+
 %
-%   Controller: command prefilter, sensor delay, PID on angular
-%   acceleration (derivative on measured rate, back-calculation
-%   anti-windup) and the 1/mu gain schedule.
+%   Controller: command prefilter, then a governor that limits how far
+%   and how fast the pitch command can lead the measured pitch. An inner
+%   rate loop and an outer attitude loop (cascade) follow, with
+%   back-calculation anti-windup, and the 1/mu gain schedule.
 %   Actuator: second order wn, zeta, with integrator saturation for the
 %   gimbal rate and angle limits.
 %   Plant: theta'' = mu*sin(delta + misalign) + lambda*theta
@@ -68,6 +69,7 @@ add_monitoring(mdl);
 add_line(mdl, 'theta_cmd/1', 'Controller/1', 'autorouting', 'on');
 add_line(mdl, 'Controller/1', 'Actuator/1', 'autorouting', 'on');
 add_line(mdl, 'Actuator/1', 'Plant/1', 'autorouting', 'on');
+add_line(mdl, 'Actuator/1', 'Controller/4', 'autorouting', 'on');
 add_line(mdl, 'Plant/1', 'Controller/2', 'autorouting', 'on');
 add_line(mdl, 'Plant/2', 'Controller/3', 'autorouting', 'on');
 
@@ -84,6 +86,7 @@ add_line(mdl, 'Actuator/1', 'log_delta/1', 'autorouting', 'on');
 add_line(mdl, 'Controller/1', 'log_deltaCmd/1', 'autorouting', 'on');
 add_line(mdl, 'Actuator/2', 'log_rate/1', 'autorouting', 'on');
 add_line(mdl, 'theta_cmd/1', 'log_thetaCmd/1', 'autorouting', 'on');
+add_line(mdl, 'Controller/2', 'log_integ/1', 'autorouting', 'on');
 
 name_line(mdl, 'Controller/1', 'delta_cmd');
 name_line(mdl, 'Actuator/1', 'delta');
@@ -102,77 +105,194 @@ end
 
 
 function add_controller(mdl)
-sub = add_empty_subsystem(mdl, 'Controller', [160 110 360 250]);
+% Cascade plus a command governor.
+%
+%   pref = 1/(cmdTau*s+1) * theta_cmd
+%   lead is clipped to +/- e_lim, then the shaped command slews at +/- q_lim.
+%   e_lim and q_lim scale with mu*sin(delta still available after trim),
+%   and they never drop below the 5 deg floors.
+%   shapeOn >= 0.5 uses the shaped command and the rate-command clip.
+%   shapeOn < 0.5 is the same cascade with only the acceleration limit.
+%
+%   q_cmd = Kth*(theta_ref - theta) + integ
+%   a_cmd = Kq*(q_cmd - q_filtered)
+%   integ_dot = KiTh*e + Kaw*(q_cmd - q_unsat) + (Kaw/Kq)*(a_sat - a_raw)
+sub = add_empty_subsystem(mdl, 'Controller', [160 80 420 300]);
 paint(sub, 'lightBlue');
-try_set(sub, 'Description', ['Prefilter, sensor delay, PID on angular acceleration, ' ...
-    '1/mu gimbal schedule.']);
+try_set(sub, 'Description', ['Prefilter, command governor, cascade rate and ' ...
+    'attitude loops, 1/mu schedule.']);
 
-add_in(sub, 'theta_cmd', 1, [30 38 60 52]);
-add_in(sub, 'theta', 2, [30 148 60 162]);
-add_in(sub, 'q', 3, [30 248 60 262]);
+add_in(sub, 'theta_cmd', 1, [20 28 50 42]);
+add_in(sub, 'theta', 2, [20 118 50 132]);
+add_in(sub, 'q', 3, [20 208 50 222]);
+add_in(sub, 'delta', 4, [20 520 50 534]);
 
-add_std('simulink/Continuous/Transfer Fcn', sub, 'cmd_prefilter', [110 25 200 65], ...
+add_std('simulink/Continuous/Transfer Fcn', sub, 'cmd_prefilter', [90 15 180 55], ...
     'Numerator', '[1]', 'Denominator', '[cmdTau 1]');
-add_std('simulink/Continuous/Transport Delay', sub, 'delay_theta', [110 135 200 175], ...
+add_std('simulink/Continuous/Transport Delay', sub, 'delay_theta', [90 105 180 145], ...
     'DelayTime', 'sensorDelay', 'InitialOutput', '0');
-add_std('simulink/Continuous/Transport Delay', sub, 'delay_q', [110 235 200 275], ...
+add_std('simulink/Continuous/Transport Delay', sub, 'delay_q', [90 195 180 235], ...
     'DelayTime', 'sensorDelay', 'InitialOutput', '0');
-add_std('simulink/Continuous/Transfer Fcn', sub, 'rate_filter', [240 235 330 275], ...
+add_std('simulink/Continuous/Transfer Fcn', sub, 'rate_filter', [220 195 310 235], ...
     'Numerator', '[1]', 'Denominator', '[Tf 1]');
 
-add_sum(sub, 'sum_e', '+-', [250 30 280 70]);
-add_std('simulink/Math Operations/Gain', sub, 'Kp', [340 15 400 45], 'Gain', 'Kp');
-add_std('simulink/Math Operations/Gain', sub, 'Ki', [340 70 400 100], 'Gain', 'Ki');
-add_std('simulink/Math Operations/Gain', sub, 'Kd', [380 235 440 265], 'Gain', '-Kd');
+% Authority left after a slow measure of gimbal trim.
+add_std('simulink/Continuous/Transfer Fcn', sub, 'trim_lpf', [90 505 180 545], ...
+    'Numerator', '[1]', 'Denominator', '[trimTau 1]');
+add_std('simulink/Math Operations/Abs', sub, 'abs_trim', [220 510 260 540]);
+add_std('simulink/Sources/Constant', sub, 'const_dMax', [220 460 280 490], ...
+    'Value', 'deltaMax');
+add_sum(sub, 'sum_head', '+-', [320 470 350 530]);
+add_std('simulink/Sources/Constant', sub, 'const_floor', [320 560 400 590], ...
+    'Value', 'deltaAvailFloor');
+add_minmax(sub, 'max_avail', [430 500 480 560]);
+add_std('simulink/Math Operations/Trigonometric Function', sub, 'sin_avail', ...
+    [520 515 570 545], 'Operator', 'sin');
+add_std('simulink/Sources/Clock', sub, 'clock', [430 620 470 650]);
+add_lookup(sub, 'lookup_mu', 'schedMu', [520 600 640 640]);
+add_lookup(sub, 'lookup_invMu', 'schedInvMu', [900 250 1020 290]);
+add_lookup(sub, 'lookup_aMax', 'schedACmdMax', [900 310 1020 350]);
+add_std('simulink/Math Operations/Product', sub, 'prod_aAvail', [680 530 720 570], ...
+    'Inputs', '**');
+add_std('simulink/Math Operations/Gain', sub, 'gain_qAuth', [760 500 830 530], ...
+    'Gain', 'shapeQ');
+add_std('simulink/Math Operations/Gain', sub, 'gain_eAuth', [760 560 830 590], ...
+    'Gain', 'shapeE');
+add_std('simulink/Sources/Constant', sub, 'const_qFloor', [760 430 850 460], ...
+    'Value', 'qLimFloor');
+add_std('simulink/Sources/Constant', sub, 'const_eFloor', [760 640 850 670], ...
+    'Value', 'eLimFloor');
+add_minmax(sub, 'max_q', [900 450 950 510]);
+add_minmax(sub, 'max_e', [900 560 950 620]);
+add_std('simulink/Math Operations/Gain', sub, 'neg_q', [1000 450 1050 480], 'Gain', '-1');
+add_std('simulink/Math Operations/Gain', sub, 'neg_e', [1000 560 1050 590], 'Gain', '-1');
 
-add_sum(sub, 'sum_idot', '++', [460 75 490 115]);
-add_std('simulink/Continuous/Integrator', sub, 'int_I', [530 80 570 110], ...
+% Lead limit, then a rate limit, around the prefiltered command.
+add_sum(sub, 'sum_lead', '+-', [240 20 270 70]);
+add_dynsat(sub, 'sat_lead', [360 20 420 80]);
+add_sum(sub, 'sum_target', '++', [480 20 510 70]);
+add_sum(sub, 'sum_serr', '+-', [600 20 630 70]);
+add_std('simulink/Math Operations/Gain', sub, 'gain_ks', [680 25 740 55], ...
+    'Gain', 'shapeKs');
+add_dynsat(sub, 'sat_sdot', [800 15 860 75]);
+add_std('simulink/Continuous/Integrator', sub, 'int_shaped', [920 25 960 55], ...
+    'InitialCondition', '0');
+add_std('simulink/Sources/Constant', sub, 'const_shape', [700 120 780 150], ...
+    'Value', 'shapeOn');
+add_switch(sub, 'sw_ref', [1040 20 1090 80]);
+
+% Outer attitude loop. q_cmd is clipped only while the governor is on.
+add_sum(sub, 'sum_e', '+-', [1160 30 1190 80]);
+add_std('simulink/Math Operations/Gain', sub, 'gain_Kth', [1240 15 1300 45], ...
+    'Gain', 'Kth');
+add_std('simulink/Math Operations/Gain', sub, 'gain_KiTh', [1240 90 1300 120], ...
+    'Gain', 'KiTh');
+add_sum(sub, 'sum_q', '++', [1360 20 1390 70]);
+add_dynsat(sub, 'sat_q', [1460 10 1520 70]);
+add_switch(sub, 'sw_q', [1580 10 1630 70]);
+
+% Inner rate loop, acceleration limit, 1/mu.
+add_sum(sub, 'sum_rate', '+-', [1700 30 1730 80]);
+add_std('simulink/Math Operations/Gain', sub, 'gain_Kq', [1780 35 1840 65], ...
+    'Gain', 'Kq');
+add_std('simulink/Math Operations/Gain', sub, 'neg_a', [1100 320 1150 350], 'Gain', '-1');
+add_dynsat(sub, 'sat_a', [1900 20 1960 90]);
+add_std('simulink/Math Operations/Product', sub, 'prod_invMu', [2020 30 2060 70], ...
+    'Inputs', '**');
+
+% Back-calculation from both the rate-command clip and the acceleration clip.
+add_sum(sub, 'sum_qErr', '+-', [1700 140 1730 190]);
+add_std('simulink/Math Operations/Gain', sub, 'gain_Kaw', [1780 145 1840 175], ...
+    'Gain', 'Kaw');
+add_sum(sub, 'sum_aErr', '+-', [1900 140 1930 190]);
+add_std('simulink/Math Operations/Gain', sub, 'gain_KawA', [1980 145 2050 175], ...
+    'Gain', 'KawA');
+add_sum(sub, 'sum_idot', '+++', [2120 90 2150 150]);
+add_std('simulink/Continuous/Integrator', sub, 'int_I', [2200 100 2240 130], ...
     'InitialCondition', '0');
 
-add_sum(sub, 'sum_a', '+++', [640 40 670 100]);
-add_std('simulink/Sources/Clock', sub, 'clock', [500 300 540 330]);
-add_lookup(sub, 'lookup_aMax', 'schedACmdMax', [580 250 700 290]);
-add_lookup(sub, 'lookup_invMu', 'schedInvMu', [580 310 700 350]);
-add_std('simulink/Math Operations/Gain', sub, 'neg_aMax', [740 250 790 280], 'Gain', '-1');
-% Saturation Dynamic ports: 1 = upper limit, 2 = signal, 3 = lower limit.
-add_std('simulink/Discontinuities/Saturation Dynamic', sub, 'sat_a', [760 40 820 110]);
-add_std('simulink/Math Operations/Product', sub, 'prod_invMu', [860 40 900 80], ...
-    'Inputs', '**');
-add_sum(sub, 'sum_aw', '+-', [800 150 830 190]);
-add_std('simulink/Math Operations/Gain', sub, 'Kaw', [620 160 680 190], 'Gain', 'Kaw');
+add_out(sub, 'delta_cmd', 1, [2120 38 2150 52]);
+add_out(sub, 'integ', 2, [2300 108 2330 122]);
 
-add_out(sub, 'delta_cmd', 1, [920 58 950 72]);
+wire = @(src, dst) add_line(sub, src, dst, 'autorouting', 'on');
+wire('theta_cmd/1', 'cmd_prefilter/1');
+wire('theta/1', 'delay_theta/1');
+wire('q/1', 'delay_q/1');
+wire('delay_q/1', 'rate_filter/1');
+wire('delta/1', 'trim_lpf/1');
+wire('trim_lpf/1', 'abs_trim/1');
+wire('const_dMax/1', 'sum_head/1');
+wire('abs_trim/1', 'sum_head/2');
+wire('sum_head/1', 'max_avail/1');
+wire('const_floor/1', 'max_avail/2');
+wire('max_avail/1', 'sin_avail/1');
+wire('clock/1', 'lookup_mu/1');
+wire('clock/1', 'lookup_invMu/1');
+wire('clock/1', 'lookup_aMax/1');
+wire('sin_avail/1', 'prod_aAvail/1');
+wire('lookup_mu/1', 'prod_aAvail/2');
+wire('prod_aAvail/1', 'gain_qAuth/1');
+wire('prod_aAvail/1', 'gain_eAuth/1');
+wire('gain_qAuth/1', 'max_q/1');
+wire('const_qFloor/1', 'max_q/2');
+wire('gain_eAuth/1', 'max_e/1');
+wire('const_eFloor/1', 'max_e/2');
+wire('max_q/1', 'neg_q/1');
+wire('max_e/1', 'neg_e/1');
 
-add_line(sub, 'theta_cmd/1', 'cmd_prefilter/1', 'autorouting', 'on');
-add_line(sub, 'cmd_prefilter/1', 'sum_e/1', 'autorouting', 'on');
-add_line(sub, 'theta/1', 'delay_theta/1', 'autorouting', 'on');
-add_line(sub, 'delay_theta/1', 'sum_e/2', 'autorouting', 'on');
-add_line(sub, 'sum_e/1', 'Kp/1', 'autorouting', 'on');
-add_line(sub, 'sum_e/1', 'Ki/1', 'autorouting', 'on');
-add_line(sub, 'q/1', 'delay_q/1', 'autorouting', 'on');
-add_line(sub, 'delay_q/1', 'rate_filter/1', 'autorouting', 'on');
-add_line(sub, 'rate_filter/1', 'Kd/1', 'autorouting', 'on');
+wire('cmd_prefilter/1', 'sum_lead/1');
+wire('delay_theta/1', 'sum_lead/2');
+wire('max_e/1', 'sat_lead/1');
+wire('sum_lead/1', 'sat_lead/2');
+wire('neg_e/1', 'sat_lead/3');
+wire('delay_theta/1', 'sum_target/1');
+wire('sat_lead/1', 'sum_target/2');
+wire('sum_target/1', 'sum_serr/1');
+wire('int_shaped/1', 'sum_serr/2');
+wire('sum_serr/1', 'gain_ks/1');
+wire('max_q/1', 'sat_sdot/1');
+wire('gain_ks/1', 'sat_sdot/2');
+wire('neg_q/1', 'sat_sdot/3');
+wire('sat_sdot/1', 'int_shaped/1');
+wire('int_shaped/1', 'sw_ref/1');
+wire('const_shape/1', 'sw_ref/2');
+wire('cmd_prefilter/1', 'sw_ref/3');
 
-add_line(sub, 'Ki/1', 'sum_idot/1', 'autorouting', 'on');
-add_line(sub, 'Kaw/1', 'sum_idot/2', 'autorouting', 'on');
-add_line(sub, 'sum_idot/1', 'int_I/1', 'autorouting', 'on');
+wire('sw_ref/1', 'sum_e/1');
+wire('delay_theta/1', 'sum_e/2');
+wire('sum_e/1', 'gain_Kth/1');
+wire('sum_e/1', 'gain_KiTh/1');
+wire('gain_Kth/1', 'sum_q/1');
+wire('int_I/1', 'sum_q/2');
+wire('max_q/1', 'sat_q/1');
+wire('sum_q/1', 'sat_q/2');
+wire('neg_q/1', 'sat_q/3');
+wire('sat_q/1', 'sw_q/1');
+wire('const_shape/1', 'sw_q/2');
+wire('sum_q/1', 'sw_q/3');
 
-add_line(sub, 'Kp/1', 'sum_a/1', 'autorouting', 'on');
-add_line(sub, 'Kd/1', 'sum_a/2', 'autorouting', 'on');
-add_line(sub, 'int_I/1', 'sum_a/3', 'autorouting', 'on');
-add_line(sub, 'clock/1', 'lookup_aMax/1', 'autorouting', 'on');
-add_line(sub, 'clock/1', 'lookup_invMu/1', 'autorouting', 'on');
-add_line(sub, 'lookup_aMax/1', 'sat_a/1', 'autorouting', 'on');
-add_line(sub, 'lookup_aMax/1', 'neg_aMax/1', 'autorouting', 'on');
-add_line(sub, 'neg_aMax/1', 'sat_a/3', 'autorouting', 'on');
-add_line(sub, 'sum_a/1', 'sat_a/2', 'autorouting', 'on');
-add_line(sub, 'sat_a/1', 'prod_invMu/1', 'autorouting', 'on');
-add_line(sub, 'lookup_invMu/1', 'prod_invMu/2', 'autorouting', 'on');
-add_line(sub, 'prod_invMu/1', 'delta_cmd/1', 'autorouting', 'on');
+wire('sw_q/1', 'sum_rate/1');
+wire('rate_filter/1', 'sum_rate/2');
+wire('sum_rate/1', 'gain_Kq/1');
+wire('lookup_aMax/1', 'sat_a/1');
+wire('lookup_aMax/1', 'neg_a/1');
+wire('neg_a/1', 'sat_a/3');
+wire('gain_Kq/1', 'sat_a/2');
+wire('sat_a/1', 'prod_invMu/1');
+wire('lookup_invMu/1', 'prod_invMu/2');
+wire('prod_invMu/1', 'delta_cmd/1');
 
-add_line(sub, 'sat_a/1', 'sum_aw/1', 'autorouting', 'on');
-add_line(sub, 'sum_a/1', 'sum_aw/2', 'autorouting', 'on');
-add_line(sub, 'sum_aw/1', 'Kaw/1', 'autorouting', 'on');
+wire('sw_q/1', 'sum_qErr/1');
+wire('sum_q/1', 'sum_qErr/2');
+wire('sum_qErr/1', 'gain_Kaw/1');
+wire('sat_a/1', 'sum_aErr/1');
+wire('gain_Kq/1', 'sum_aErr/2');
+wire('sum_aErr/1', 'gain_KawA/1');
+wire('gain_KiTh/1', 'sum_idot/1');
+wire('gain_Kaw/1', 'sum_idot/2');
+wire('gain_KawA/1', 'sum_idot/3');
+wire('sum_idot/1', 'int_I/1');
+wire('int_I/1', 'integ/1');
 end
 
 
@@ -281,6 +401,7 @@ add_log(mdl, 'log_delta', 'delta', [980 350 1060 380]);
 add_log(mdl, 'log_deltaCmd', 'deltaCmd', [980 390 1060 420]);
 add_log(mdl, 'log_rate', 'gimbalRateMeas', [980 430 1060 460]);
 add_log(mdl, 'log_thetaCmd', 'thetaCmd', [980 470 1060 500]);
+add_log(mdl, 'log_integ', 'integ', [980 510 1060 540]);
 end
 
 
@@ -337,6 +458,27 @@ end
 
 function add_out(parent, name, port, pos)
 add_std('simulink/Sinks/Out1', parent, name, pos, 'Port', num2str(port));
+end
+
+
+function add_dynsat(parent, name, pos)
+% Ports: 1 = upper limit, 2 = signal, 3 = lower limit.
+add_std('simulink/Discontinuities/Saturation Dynamic', parent, name, pos);
+end
+
+
+function add_switch(parent, name, pos)
+% Port 1 passes when the control port is >= 0.5. Port 3 passes otherwise.
+add_std('simulink/Signal Routing/Switch', parent, name, pos, ...
+    'Criteria', 'u2 >= Threshold', ...
+    'Threshold', '0.5');
+end
+
+
+function add_minmax(parent, name, pos)
+add_std('simulink/Math Operations/MinMax', parent, name, pos, ...
+    'Function', 'max', ...
+    'Inputs', '2');
 end
 
 
@@ -399,9 +541,9 @@ end
 function annotate(mdl)
 try
     note = Simulink.Annotation(blk(mdl, 'Overview'));
-    note.Text = ['Pitch TVC: command -> controller -> actuator -> plant.' newline ...
-        'PID gains are rad/s^2 per rad. inv_mu converts that to gimbal angle.' newline ...
-        'Workspace variables come from apply_pitch_condition. Run run_pitch_tvc.'];
+    note.Text = ['Pitch TVC: command -> governor -> cascade -> actuator -> plant.' newline ...
+        'Kq, Kth and KiTh are the cascade. delta_cmd = a_cmd / mu(t).' newline ...
+        'shapeOn = 0 leaves the governor off. Variables come from apply_pitch_condition.'];
     note.Position = [40 20];
     note.FontSize = 11;
 catch ME

@@ -9,13 +9,16 @@ function D = design_pitch_controller(V, opts)
 %   mu = F*arm/I at the flight condition. One set of PID gains is used at
 %   every condition; only mu, lambda and the disturbance gain change.
 %
-%   Loop shape, with the derivative on measured rate (no derivative kick):
+%   The Simulink law is a cascade with that loop gain. Derivative on
+%   measured rate (no derivative kick):
 %
-%       a_cmd = Kp*e + Ki*integral(e) - Kd*s/(Tf*s+1)*theta_meas
-%       e     = filter(theta_cmd) - theta_meas
+%       q_cmd = Kth*e + KiTh*integral(e)
+%       a_cmd = Kq*(q_cmd - s/(Tf*s+1)*theta_meas)
+%       Kp = Kq*Kth,  Kd = Kq,  Ki = Kq*KiTh
 %
 %   Margins use the 1-DOF PID tf(pid(...)), which has the same loop gain.
-%   The command prefilter is outside the loop.
+%   The command prefilter and the command governor sit outside the loop.
+%   The governor is inactive on the 5 deg design step.
 %
 %   Open the same plant interactively with open_pitch_tuner.
 
@@ -27,14 +30,33 @@ end
 
 require_control_toolbox();
 
-% Formulas reproduce the companion PD (wn, zeta) plus a weak integrator.
-% Set V.Kp, V.Ki, V.Kd or V.Tf to paste a result back from PID Tuner.
-D.Kp = gain_or(V, 'Kp', V.attWn^2);
-D.Ki = gain_or(V, 'Ki', V.attKiOverWn3 * V.attWn^3);
-D.Kd = gain_or(V, 'Kd', 2 * V.attZeta * V.attWn);
+% Inner rate loop Kq, outer attitude loop Kth, attitude integrator KiTh.
+% Overrides V.Kp / V.Ki / V.Kd still win, for a PID Tuner paste-back.
+D.Kq = gain_or(V, 'Kq', V.Kq);
+D.Kth = gain_or(V, 'Kth', V.attWn^2 / D.Kq);
+D.KiTh = gain_or(V, 'KiTh', V.attKiOverWn3 * V.attWn^3 / D.Kq);
+D.Kp = gain_or(V, 'Kp', D.Kq * D.Kth);
+D.Ki = gain_or(V, 'Ki', D.Kq * D.KiTh);
+D.Kd = gain_or(V, 'Kd', D.Kq);
+% A pasted PID override wins. Rebuild the cascade so the diagram matches
+% the margins: Kd is the rate gain.
+if abs(D.Kp - D.Kq * D.Kth) > 1e-9 || abs(D.Ki - D.Kq * D.KiTh) > 1e-9 ...
+        || abs(D.Kd - D.Kq) > 1e-9
+    D.Kq = D.Kd;
+    D.Kth = D.Kp / max(D.Kd, 1e-9);
+    D.KiTh = D.Ki / max(D.Kd, 1e-9);
+end
 D.Tf = gain_or(V, 'Tf', V.attTf);
 D.kaw = V.kaw;
 D.cmdTau = V.cmdTau;
+D.etaAuth = V.etaAuth;
+D.shapeKs = V.shapeKs;
+D.trimTau = V.trimTau;
+D.shapeQ = D.etaAuth / max(D.Kq, 1e-9);       % q_lim = shapeQ * a_avail
+D.shapeE = D.etaAuth / max(D.Kp, 1e-6);      % e_lim = shapeE * a_avail
+D.qLimFloor = deg2rad(V.thetaStepDeg) / V.cmdTau * 1.25;
+D.eLimFloor = deg2rad(V.thetaStepDeg) * 1.2;
+D.deltaAvailFloor = V.deltaAvailFrac * V.gimbalMax;
 D.pid = pid(D.Kp, D.Ki, D.Kd, D.Tf);
 D.Ctf = tf(D.pid);
 
@@ -287,8 +309,14 @@ end
 function print_report(V, D)
 fprintf('\nSuper Heavy pitch TVC  (gain-scheduled PID on angular acceleration)\n');
 fprintf('Companion target:  wn = %.2f rad/s,  zeta = %.2f\n', V.attWn, V.attZeta);
-fprintf('Kp = %.4g 1/s^2    Ki = %.4g 1/s^3    Kd = %.4g 1/s    Tf = %.3f s\n', ...
+fprintf('Cascade: Kq = %.3g 1/s, Kth = %.3g 1/s, Ki_th = %.3g 1/s^2\n', ...
+    D.Kq, D.Kth, D.KiTh);
+fprintf('Equivalent damping zeta = %.2f. Companion PD uses zeta = %.2f.\n', ...
+    D.Kd / (2 * sqrt(max(D.Kp, 1e-9))), V.attZeta);
+fprintf('Equivalent PID: Kp = %.4g, Ki = %.4g, Kd = %.4g, Tf = %.3f s\n', ...
     D.Kp, D.Ki, D.Kd, D.Tf);
+fprintf('Command governor: eta = %.2f, rate floor %.1f deg/s, lead floor %.1f deg\n', ...
+    D.etaAuth, rad2deg(D.qLimFloor), rad2deg(D.eLimFloor));
 fprintf('Actuator %.1f Hz, zeta %.2f, rate limit %.0f deg/s, angle limit %.0f deg\n', ...
     V.actHz, V.actZeta, V.gimbalRateDeg, V.gimbalMaxDeg);
 fprintf('Sensor delay %.0f ms,  command prefilter %.2f s (outside the loop)\n', ...

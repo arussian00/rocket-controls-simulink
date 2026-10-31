@@ -1,13 +1,15 @@
-function fig = pitch_dashboard(D, simNominal, simLarge, simMis, schedule, traj)
+function fig = pitch_dashboard(D, simNominal, simBefore, simAfter, simMis, schedule, traj)
 %PITCH_DASHBOARD  One window for the pitch-TVC runs.
 %
-%   fig = pitch_dashboard(D, simNominal, simLarge, simMis)
+%   fig = pitch_dashboard(D, simNominal, simBefore, simAfter, simMis, schedule, traj)
 %
-%   A uifigure with three tabs. MATLAB Online shows it in the browser
+%   A uifigure with four tabs. MATLAB Online shows it in the browser
 %   figure panel. Bode curves are drawn from freqresp so Control System
 %   Toolbox does not open its own figure. The exact-delay models are used
 %   first; freqresp falls back to rational_delay if a release refuses them.
 %   Step overlays go through step_delay, same as the checklist.
+%   simBefore / simAfter are the 30 deg liftoff step with the command
+%   governor off, then on.
 
 colors = [0.000 0.447 0.741
           0.850 0.325 0.098
@@ -24,9 +26,9 @@ tabBode = uitab(tabs, 'Title', 'Bode');
 tabMore = uitab(tabs, 'Title', 'Limits and disturbances');
 tabFlight = uitab(tabs, 'Title', 'Along the flight');
 
-build_responses(tabResp, D, simNominal, colors);
+build_responses(tabResp, D, simNominal, colors, {simBefore, simAfter});
 build_bode(tabBode, D, colors);
-build_more(tabMore, D, simLarge, simMis, colors);
+build_more(tabMore, D, simBefore, simAfter, simMis, colors);
 build_flight(tabFlight, D, schedule, traj);
 
 fig.Visible = 'on';
@@ -34,9 +36,9 @@ drawnow
 end
 
 
-function build_responses(parent, D, runs, colors)
+function build_responses(parent, D, runs, colors, extras)
 g = uigridlayout(parent, [3 2]);
-g.RowHeight = {'1x', '1x', 210};
+g.RowHeight = {'1x', '1x', 280};
 g.ColumnWidth = {'1x', '1x'};
 g.Padding = [12 10 12 10];
 g.RowSpacing = 8;
@@ -111,16 +113,18 @@ foot.RowHeight = {44, '1x'};
 foot.Padding = [0 0 0 0];
 foot.RowSpacing = 4;
 note = ['Solid pitch is the 5 deg Simulink run. Dashed pitch is the linear model ' ...
-    'with the exact delay. Rise, overshoot and settling in the table are that ' ...
-    'linear command. Peak gimbal and rate are from Simulink. Stable is the ' ...
-    'order-6 Padé test (isstable cannot see the internal delay). ' ...
-    'GM up is the classical margin; GM down is how far gain can fall.'];
+    'with the exact delay. Rise, overshoot and settling are that linear command. ' ...
+    'Peak gimbal, rate, time on the stops and the integrator are from Simulink. ' ...
+    'The 30 deg rows reuse the liftoff linear margins; their rise and settling ' ...
+    'cells are blank. Stable is the order-6 Padé test. GM up is the classical ' ...
+    'margin; GM down is how far gain can fall.'];
 uilabel(foot, 'Text', note, 'WordWrap', 'on', 'VerticalAlignment', 'top');
-uitable(foot, 'Data', table2cell(stats_table(D, runs)), ...
+uitable(foot, 'Data', blank_nan(table2cell(stats_table(D, runs, extras))), ...
     'ColumnName', {'Condition', 'Stable', 'PM [deg]', 'GM up [dB]', 'GM down [dB]', ...
     'wc [rad/s]', 'Rise [s]', 'Overshoot [%]', 'Ts 5% [s]', 'Ts 2% [s]', ...
-    'Peak gimbal [deg]', 'Peak rate [deg/s]'}, ...
-    'ColumnSortable', true, 'RowName', {}, 'FontSize', 12);
+    'Peak gimbal [deg]', 'Peak rate [deg/s]', 'On angle [s]', 'On rate [s]', ...
+    'Integrator [deg/s]'}, ...
+    'ColumnSortable', true, 'RowName', {}, 'FontSize', 11);
 end
 
 
@@ -181,39 +185,69 @@ legend(axPh, cellstr(string({D.flight.name})), 'Location', 'southwest');
 end
 
 
-function build_more(parent, D, simLarge, simMis, colors)
-g = uigridlayout(parent, [3 2]);
-g.RowHeight = {'1x', '1x', '1x'};
+function build_more(parent, D, simBefore, simAfter, simMis, colors)
+g = uigridlayout(parent, [4 2]);
+g.RowHeight = {'1x', '1x', '1x', '1x'};
 g.ColumnWidth = {'1x', '1x'};
 g.Padding = [12 10 12 10];
 g.RowSpacing = 8;
 g.ColumnSpacing = 10;
 g.Scrollable = 'on';
 
-axLp = new_axes(g, 1, 1);
-axLg = new_axes(g, 1, 2);
-axMp = new_axes(g, 2, 1);
-axMg = new_axes(g, 2, 2);
-axDr = new_axes(g, 3, [1 2]);
+axPitch = new_axes(g, 1, 1);
+axInt = new_axes(g, 1, 2);
+axGim = new_axes(g, 2, 1);
+axRate = new_axes(g, 2, 2);
+axMp = new_axes(g, 3, 1);
+axMg = new_axes(g, 3, 2);
+axDr = new_axes(g, 4, [1 2]);
 
-plot(axLp, simLarge.t, simLarge.thetaCmdDeg, 'k--', simLarge.t, simLarge.thetaDeg, ...
-    'LineWidth', 1.2);
-style_ax(axLp);
-xlabel(axLp, 'Time [s]');
-ylabel(axLp, 'Pitch [deg]');
-title(axLp, sprintf('Liftoff %.0f deg step (limits active)', simLarge.thetaStepDeg));
-legend(axLp, {'command', 'pitch'}, 'Location', 'southeast');
+cBefore = colors(2, :);
+cAfter = colors(1, :);
+plot(axPitch, simBefore.t, simBefore.thetaCmdDeg, 'k--', 'LineWidth', 1.1);
+hold(axPitch, 'on');
+plot(axPitch, simBefore.t, simBefore.thetaDeg, 'Color', cBefore, 'LineWidth', 1.2);
+plot(axPitch, simAfter.t, simAfter.thetaDeg, 'Color', cAfter, 'LineWidth', 1.3);
+style_ax(axPitch);
+xlabel(axPitch, 'Time [s]');
+ylabel(axPitch, 'Pitch [deg]');
+title(axPitch, sprintf('Liftoff %.0f deg. Before ends at %.1f deg, after at %.1f deg.', ...
+    simBefore.thetaStepDeg, simBefore.thetaDeg(end), simAfter.thetaDeg(end)));
+legend(axPitch, {'command', 'before', 'after'}, 'Location', 'southeast');
 
-plot(axLg, simLarge.t, simLarge.deltaCmdDeg, simLarge.t, simLarge.deltaDeg, ...
-    'LineWidth', 1.2);
-hold(axLg, 'on');
-limit_lines(axLg, simLarge.t, D.deltaMaxDeg);
-style_ax(axLg);
-xlabel(axLg, 'Time [s]');
-ylabel(axLg, 'Gimbal [deg]');
-title(axLg, sprintf('Peak |gimbal| %.1f deg, peak |rate| %.1f deg/s', ...
-    max(abs(simLarge.deltaDeg)), max(abs(simLarge.rateDeg))));
-legend(axLg, {'command', 'nozzle'}, 'Location', 'northeast');
+plot_integ(axInt, simBefore, cBefore, simAfter, cAfter);
+style_ax(axInt);
+xlabel(axInt, 'Time [s]');
+ylabel(axInt, 'Integrator [deg/s]');
+title(axInt, sprintf('Attitude integrator. Before ends at %.3f deg/s, after at %.3f deg/s.', ...
+    rad2deg(simBefore.integEnd), rad2deg(simAfter.integEnd)));
+legend(axInt, {'before', 'after'}, 'Location', 'northeast');
+
+plot(axGim, simBefore.t, simBefore.deltaDeg, 'Color', cBefore, 'LineWidth', 1.2);
+hold(axGim, 'on');
+plot(axGim, simAfter.t, simAfter.deltaDeg, 'Color', cAfter, 'LineWidth', 1.3);
+limit_lines(axGim, simBefore.t, D.deltaMaxDeg);
+style_ax(axGim);
+xlabel(axGim, 'Time [s]');
+ylabel(axGim, 'Gimbal [deg]');
+title(axGim, sprintf(['Gimbal angle, stops at \\pm%.0f deg. Before peak %.1f deg ' ...
+    '(%.2f s on the stop). After peak %.1f deg (%.2f s).'], ...
+    D.deltaMaxDeg, max(abs(simBefore.deltaDeg)), simBefore.tOnAngle, ...
+    max(abs(simAfter.deltaDeg)), simAfter.tOnAngle));
+legend(axGim, {'before', 'after'}, 'Location', 'northeast');
+
+plot(axRate, simBefore.t, simBefore.rateDeg, 'Color', cBefore, 'LineWidth', 1.2);
+hold(axRate, 'on');
+plot(axRate, simAfter.t, simAfter.rateDeg, 'Color', cAfter, 'LineWidth', 1.3);
+limit_lines(axRate, simBefore.t, D.gimbalRateDeg);
+style_ax(axRate);
+xlabel(axRate, 'Time [s]');
+ylabel(axRate, 'Gimbal rate [deg/s]');
+title(axRate, sprintf(['Gimbal rate, stops at \\pm%.0f deg/s. Before peak %.1f ' ...
+    '(%.2f s on the stop). After peak %.1f (%.2f s).'], ...
+    D.gimbalRateDeg, max(abs(simBefore.rateDeg)), simBefore.tOnRate, ...
+    max(abs(simAfter.rateDeg)), simAfter.tOnRate));
+legend(axRate, {'before', 'after'}, 'Location', 'northeast');
 
 flight = match_flight(D, simMis.name);
 tLin = (0:0.02:(simMis.tStop - simMis.misalignTime))';
@@ -308,8 +342,12 @@ gmMark = [D.flight(1).margins.gmUp, D.flight(2).margins.gmUp, D.flight(3).margin
 end
 
 
-function T = stats_table(D, runs)
-n = numel(D.flight);
+function T = stats_table(D, runs, extras)
+if nargin < 3
+    extras = {};
+end
+nFlight = numel(D.flight);
+n = nFlight + numel(extras);
 condition = strings(n, 1);
 stable = strings(n, 1);
 pm = nan(n, 1);
@@ -322,31 +360,80 @@ ts5 = nan(n, 1);
 ts2 = nan(n, 1);
 peakGim = nan(n, 1);
 peakRate = nan(n, 1);
-for k = 1:n
+tOnAngle = nan(n, 1);
+tOnRate = nan(n, 1);
+integEnd = nan(n, 1);
+for k = 1:nFlight
     f = D.flight(k);
     r = match_run(runs, f.name);
-    condition(k) = string(f.name);
-    if f.margins.stable
-        stable(k) = "yes";
-    else
-        stable(k) = "no";
-    end
-    pm(k) = f.margins.pm;
-    gmUp(k) = f.margins.gmUp;
-    gmDown(k) = f.margins.gmDown;
-    wc(k) = f.margins.wc;
+    [condition(k), stable(k), pm(k), gmUp(k), gmDown(k), wc(k)] = margin_cells(f);
     rise(k) = f.step5.RiseTime;
     overshoot(k) = f.step5.Overshoot;
     ts5(k) = f.step5.SettlingTime;
     ts2(k) = f.step2.SettlingTime;
-    peakGim(k) = max(abs(r.deltaDeg));
-    peakRate(k) = max(abs(r.rateDeg));
+    [peakGim(k), peakRate(k), tOnAngle(k), tOnRate(k), integEnd(k)] = sim_cells(r);
+end
+liftoff = D.flight(1);
+for k = 1:numel(extras)
+    r = extras{k};
+    row = nFlight + k;
+    [~, stable(row), pm(row), gmUp(row), gmDown(row), wc(row)] = margin_cells(liftoff);
+    if isfield(r, 'label') && strlength(string(r.label)) > 0
+        condition(row) = string(r.label);
+    else
+        condition(row) = string(r.name);
+    end
+    [peakGim(row), peakRate(row), tOnAngle(row), tOnRate(row), integEnd(row)] = sim_cells(r);
 end
 T = table(condition, stable, pm, gmUp, gmDown, wc, rise, overshoot, ts5, ts2, ...
-    peakGim, peakRate, ...
+    peakGim, peakRate, tOnAngle, tOnRate, integEnd, ...
     'VariableNames', {'Condition', 'Stable', 'PM_deg', 'GM_up_dB', 'GM_down_dB', ...
     'wc_rad_s', 'Rise_s', 'Overshoot_pct', 'Ts5_s', 'Ts2_s', ...
-    'PeakGimbal_deg', 'PeakRate_deg_s'});
+    'PeakGimbal_deg', 'PeakRate_deg_s', 'OnAngle_s', 'OnRate_s', 'Integ_deg_s'});
+end
+
+
+function [condition, stable, pm, gmUp, gmDown, wc] = margin_cells(f)
+condition = string(f.name);
+if f.margins.stable
+    stable = "yes";
+else
+    stable = "no";
+end
+pm = f.margins.pm;
+gmUp = f.margins.gmUp;
+gmDown = f.margins.gmDown;
+wc = f.margins.wc;
+end
+
+
+function [peakGim, peakRate, tOnAngle, tOnRate, integEnd] = sim_cells(r)
+peakGim = max(abs(r.deltaDeg));
+peakRate = max(abs(r.rateDeg));
+tOnAngle = r.tOnAngle;
+tOnRate = r.tOnRate;
+integEnd = rad2deg(r.integEnd);
+end
+
+
+function cells = blank_nan(cells)
+for k = 1:numel(cells)
+    value = cells{k};
+    if isnumeric(value) && isscalar(value) && isnan(value)
+        cells{k} = [];
+    end
+end
+end
+
+
+function plot_integ(ax, simBefore, cBefore, simAfter, cAfter)
+nB = min(numel(simBefore.t), numel(simBefore.integ));
+nA = min(numel(simAfter.t), numel(simAfter.integ));
+plot(ax, simBefore.t(1:nB), rad2deg(simBefore.integ(1:nB)), ...
+    'Color', cBefore, 'LineWidth', 1.2);
+hold(ax, 'on');
+plot(ax, simAfter.t(1:nA), rad2deg(simAfter.integ(1:nA)), ...
+    'Color', cAfter, 'LineWidth', 1.3);
 end
 
 

@@ -86,22 +86,28 @@ V.CNa = 2.0;                                  % [1/rad]
 V.staticMarginAscent = -0.5;                  % [calibers]
 V.staticMarginLanding = 0.0;
 
-% Attitude law, in angular-acceleration units, before the 1/mu schedule.
-% wn and zeta are the companion's attWn and attZeta (rocket_params.m).
-% Ki = attKiOverWn3 * wn^3 trims a constant moment (misalignment, aero).
-% 0.02 keeps the step overshoot near the PD design; the last fraction of a
-% degree then comes out slowly. Raise it in PID Tuner for faster trim.
+% Cascade: inner rate gain Kq, outer attitude-to-rate gain Kth.
+% Equivalent acceleration PID is Kp = Kq*Kth, Kd = Kq, Ki = Kq*KiTh.
+% Kq = 2 gives a critically damped wn = 1 loop (zeta = 1) with about
+% 64 deg / 19 dB, still above the 30 deg / 6 dB floor on the scheduled flight.
+% attZeta stays at the companion's 0.8. It is printed as that target.
+% It does not set Kq.
 V.attWn = B.attWn;
 V.attZeta = B.attZeta;
 V.attKiOverWn3 = 0.02;
-V.attTf = 0.05;                               % derivative filter [s]
-V.kaw = 1.0;                                  % integrator back-calculation [1/s]
+V.Kq = 2.0;
+V.attTf = 0.05;                               % rate filter [s]
+V.kaw = 1.0;                                  % back-calculation [1/s]
 
-% Command prefilter. A raw step asks the 6 Hz servo for a gimbal rate well
-% above 20 deg/s. Guidance commands are smooth; 0.5 s keeps a 5 deg step
-% inside the rate limit so the small-signal design is what the sim runs.
-% The prefilter is outside the feedback loop, so it does not change margins.
+% Command prefilter, outside the feedback loop. The authority governor
+% (etaAuth) then rate-limits and lead-limits the command using the gimbal
+% angle still available after trim. A floor keeps the 5 deg design step
+% off that limiter so the linear overlay still applies.
 V.cmdTau = 0.5;
+V.etaAuth = 0.85;
+V.shapeKs = 20;                               % rate-limiter tracking [1/s]
+V.trimTau = 3;                                % trim-gimbal filter [s]
+V.deltaAvailFrac = 0.25;                      % minimum fraction of the stop kept free
 
 % Scenario used by run_pitch_tvc.
 V.thetaStepDeg = 5;
@@ -109,8 +115,8 @@ V.thetaStepTime = 1;
 V.gustSpeed = 15;                             % crosswind step [m/s]
 V.gustTime = 14;
 V.tStop = 22;
-V.largeStepDeg = 30;                          % big enough to hit the stops
-V.largeStepStop = 35;
+V.largeStepDeg = 30;                          % big enough to saturate an ungoverned command
+V.largeStepStop = 45;                         % governed 30 deg step needs the extra time
 
 %% Flight conditions
 % max-q mass, speed and altitude are a snapshot of the companion stack

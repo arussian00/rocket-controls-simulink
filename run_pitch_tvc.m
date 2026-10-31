@@ -7,10 +7,11 @@
 %   Needs Simulink and Control System Toolbox. Does not need the Aerospace
 %   Blockset or Simulink Control Design.
 %
-%   Prints stability margins, builds boosterPitchTVC.slx, runs five sims
+%   Prints stability margins, builds boosterPitchTVC.slx, runs six sims
 %   and opens one dashboard window. The command window still prints the
 %   PASS/REVIEW checklist. REVIEW means "look at this number", not that
-%   the script failed.
+%   the script failed. The two 30 deg liftoff runs are the same step with
+%   the command governor off, then on.
 
 clear; close all; clc
 
@@ -27,18 +28,24 @@ for k = 1:numel(nominal)
     simNominal{k} = run_case(D, mdl, nominal(k));
 end
 
-fprintf('Simulating liftoff, 30 deg step (rate and angle limits) ...\n');
-simLarge = run_case(D, mdl, "liftoff", ...
-    thetaStepDeg=V.largeStepDeg, gustSpeed=0, tStop=V.largeStepStop);
+fprintf('Simulating liftoff, 30 deg step, command governor off ...\n');
+simBefore = run_case(D, mdl, "liftoff", ...
+    thetaStepDeg=V.largeStepDeg, gustSpeed=0, tStop=V.largeStepStop, shapeOn=0);
+simBefore.label = "30 deg before";
+
+fprintf('Simulating liftoff, 30 deg step, command governor on ...\n');
+simAfter = run_case(D, mdl, "liftoff", ...
+    thetaStepDeg=V.largeStepDeg, gustSpeed=0, tStop=V.largeStepStop, shapeOn=1);
+simAfter.label = "30 deg after";
 
 fprintf('Simulating max-q, 0.5 deg thrust misalignment ...\n');
 simMis = run_case(D, mdl, "max-q", ...
     thetaStepDeg=0, gustSpeed=0, misalignDeg=0.5, misalignTime=2, tStop=40);
 
 close all
-pitchDashboard = pitch_dashboard(D, simNominal, simLarge, simMis, schedule, traj); %#ok<NASGU>
+pitchDashboard = pitch_dashboard(D, simNominal, simBefore, simAfter, simMis, schedule, traj); %#ok<NASGU>
 apply_flight_schedule(traj, D.deltaMax);
-print_checks(D, simNominal, simLarge, simMis);
+print_checks(D, simNominal, simBefore, simAfter, simMis);
 
 
 %% ------------------------------------------------------------------------
@@ -54,6 +61,7 @@ arguments
     opts.misalignDeg (1,1) double = 0
     opts.misalignTime (1,1) double = 2
     opts.tStop (1,1) double = NaN
+    opts.shapeOn (1,1) double = NaN
 end
 
 args = named_args(opts);
@@ -66,6 +74,7 @@ out = sim(char(mdl), 'ReturnWorkspaceOutputs', 'on');
 [~, deltaCmd] = unpack_log(fetch_log(out, 'deltaCmd'));
 [~, rate] = unpack_log(fetch_log(out, 'gimbalRateMeas'));
 [~, thetaCmd] = unpack_log(fetch_log(out, 'thetaCmd'));
+[~, integ] = unpack_log(fetch_log(out, 'integ'));
 
 result.name = name;
 result.t = t;
@@ -75,6 +84,11 @@ result.deltaDeg = rad2deg(delta);
 result.deltaCmdDeg = rad2deg(deltaCmd);
 result.rateDeg = rad2deg(rate);
 result.thetaCmdDeg = rad2deg(thetaCmd);
+result.integ = integ(:);
+result.integEnd = result.integ(end);
+result.tOnAngle = dwell_time(t, abs(result.deltaDeg) >= D.deltaMaxDeg - 0.05);
+result.tOnRate = dwell_time(t, abs(result.rateDeg) >= D.gimbalRateDeg - 0.05);
+result.shapeOn = base_or('shapeOn', 1, false);
 result.thetaStepDeg = base_or('thetaStep', D.thetaStepDeg, true);
 result.thetaStepTime = base_or('thetaStepTime', D.thetaStepTime, false);
 result.gustSpeed = base_or('gustSpeed', D.gustSpeed, false);
@@ -88,7 +102,7 @@ end
 function args = named_args(opts)
 % Drop NaN overrides so apply_pitch_condition keeps its defaults.
 fields = ["thetaStepDeg", "thetaStepTime", "gustSpeed", "gustTime", ...
-    "misalignDeg", "misalignTime", "tStop"];
+    "misalignDeg", "misalignTime", "tStop", "shapeOn"];
 args = {};
 for k = 1:numel(fields)
     value = opts.(fields(k));
@@ -142,7 +156,17 @@ end
 end
 
 
-function print_checks(D, runs, simLarge, simMis)
+function tout = dwell_time(t, on)
+% Seconds during which `on` is true. Each solver interval uses its start sample.
+if numel(t) < 2
+    tout = 0;
+    return
+end
+tout = sum(diff(t(:)) .* double(on(1:end-1)));
+end
+
+
+function print_checks(D, runs, simBefore, simAfter, simMis)
 fprintf('\nChecklist (REVIEW = look at the plot, the run still finished)\n');
 for k = 1:numel(runs)
     r = runs{k};
@@ -174,16 +198,26 @@ for k = 1:numel(runs)
     end
 end
 
-peakDelta = max(abs(simLarge.deltaDeg));
-peakRate = max(abs(simLarge.rateDeg));
-hitAngle = peakDelta > 0.98 * D.deltaMaxDeg;
-hitRate = peakRate > 0.98 * D.gimbalRateDeg;
-flag = "PASS";
-if ~(hitAngle && hitRate)
-    flag = "REVIEW";
+flagB = "PASS";
+if simBefore.tOnRate < 0.2
+    flagB = "REVIEW";
 end
-fprintf('  %s  30 deg   peak |gimbal| %.2f deg, peak |rate| %.1f deg/s (both limits should be reached)\n', ...
-    flag, peakDelta, peakRate);
+fprintf(['  %s  30 deg before  final %.2f deg, peak |gimbal| %.2f deg, ' ...
+    'peak |rate| %.1f deg/s, on angle %.2f s, on rate %.2f s\n'], ...
+    flagB, simBefore.thetaDeg(end), max(abs(simBefore.deltaDeg)), ...
+    max(abs(simBefore.rateDeg)), simBefore.tOnAngle, simBefore.tOnRate);
+
+flagA = "PASS";
+if simAfter.tOnAngle > 0.05 || simAfter.tOnRate > 0.05 ...
+        || max(abs(simAfter.deltaDeg)) > D.deltaMaxDeg - 0.5 ...
+        || max(abs(simAfter.rateDeg)) > D.gimbalRateDeg - 0.5 ...
+        || abs(simAfter.thetaDeg(end) - simAfter.thetaStepDeg) > 2
+    flagA = "REVIEW";
+end
+fprintf(['  %s  30 deg after   final %.2f deg, peak |gimbal| %.2f deg, ' ...
+    'peak |rate| %.1f deg/s, on angle %.2f s, on rate %.2f s\n'], ...
+    flagA, simAfter.thetaDeg(end), max(abs(simAfter.deltaDeg)), ...
+    max(abs(simAfter.rateDeg)), simAfter.tOnAngle, simAfter.tOnRate);
 
 thetaEnd = simMis.thetaDeg(end);
 deltaEnd = simMis.deltaDeg(end);

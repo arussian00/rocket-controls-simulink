@@ -6,7 +6,7 @@ function apply_pitch_condition(D, name, opts)
 %   pitch_model_init do it for a manual Run of the liftoff case.
 %
 %   apply_pitch_condition(D, "max-q")
-%   apply_pitch_condition(D, "liftoff", thetaStepDeg=30, gustSpeed=0, tStop=35)
+%   apply_pitch_condition(D, "liftoff", thetaStepDeg=30, gustSpeed=0, tStop=45, shapeOn=0)
 
 arguments
     D (1,1) struct
@@ -18,6 +18,7 @@ arguments
     opts.misalignDeg (1,1) double = 0
     opts.misalignTime (1,1) double = 12
     opts.tStop (1,1) double = NaN
+    opts.shapeOn (1,1) double = 1
 end
 
 flight = find_flight(D, name);
@@ -36,8 +37,20 @@ assign('sensorDelay', D.sensorDelay);
 assign('Kp', D.Kp);
 assign('Ki', D.Ki);
 assign('Kd', D.Kd);
+assign('Kq', D.Kq);
+assign('Kth', D.Kth);
+assign('KiTh', D.KiTh);
 assign('Tf', D.Tf);
 assign('Kaw', D.kaw);
+assign('KawA', D.kaw / max(D.Kq, 1e-9));
+assign('shapeOn', opts.shapeOn);
+assign('shapeKs', D.shapeKs);
+assign('shapeQ', D.shapeQ);
+assign('shapeE', D.shapeE);
+assign('qLimFloor', D.qLimFloor);
+assign('eLimFloor', D.eLimFloor);
+assign('trimTau', D.trimTau);
+assign('deltaAvailFloor', D.deltaAvailFloor);
 
 assign('actWn', D.actWn);
 assign('actZeta', D.actZeta);
