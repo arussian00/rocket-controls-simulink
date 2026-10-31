@@ -8,13 +8,14 @@
 %   Blockset or Simulink Control Design.
 %
 %   Prints stability margins, builds boosterPitchTVC.slx, runs five sims
-%   and writes a PASS/REVIEW checklist. REVIEW means "look at this number",
-%   not that the script failed.
+%   and opens one dashboard window. The command window still prints the
+%   PASS/REVIEW checklist. REVIEW means "look at this number", not that
+%   the script failed.
 
 clear; close all; clc
 
 V = vehicle_params();
-D = design_pitch_controller(V);
+D = design_pitch_controller(V, plot=false);
 mdl = build_pitch_model();
 
 nominal = ["liftoff", "max-q", "landing"];
@@ -32,10 +33,8 @@ fprintf('Simulating max-q, 0.5 deg thrust misalignment ...\n');
 simMis = run_case(D, mdl, "max-q", ...
     thetaStepDeg=0, gustSpeed=0, misalignDeg=0.5, misalignTime=2, tStop=40);
 
-plot_nominal(D, simNominal);
-plot_overlay(D, simNominal);
-plot_large(D, simLarge);
-plot_misalign(D, simMis);
+close all
+pitchDashboard = pitch_dashboard(D, simNominal, simLarge, simMis); %#ok<NASGU>
 print_checks(D, simNominal, simLarge, simMis);
 
 
@@ -137,117 +136,6 @@ else
     error('run_pitch_tvc:LogFormat', ...
         'Expected a timeseries log, got %s.', class(ts));
 end
-end
-
-
-function plot_nominal(D, runs)
-figure('Name', 'Simulink pitch TVC, 5 deg');
-tiledlayout(3, 1);
-nexttile
-hold on
-for k = 1:numel(runs)
-    plot(runs{k}.t, runs{k}.thetaDeg, 'LineWidth', 1.2);
-end
-plot(runs{1}.t, runs{1}.thetaCmdDeg, 'k--', 'LineWidth', 1.0);
-grid on
-ylabel('Pitch [deg]');
-legend({char(runs{1}.name), char(runs{2}.name), char(runs{3}.name), 'command'}, ...
-    'Location', 'southeast');
-title(sprintf('%.0f deg step, %.0f m/s gust at %.0f s', ...
-    D.thetaStepDeg, D.gustSpeed, D.gustTime));
-
-nexttile
-hold on
-for k = 1:numel(runs)
-    plot(runs{k}.t, runs{k}.deltaDeg, 'LineWidth', 1.2);
-end
-yline(D.deltaMaxDeg, ':');
-yline(-D.deltaMaxDeg, ':');
-grid on
-ylabel('Gimbal [deg]');
-
-nexttile
-hold on
-for k = 1:numel(runs)
-    plot(runs{k}.t, runs{k}.rateDeg, 'LineWidth', 1.2);
-end
-yline(D.gimbalRateDeg, ':');
-yline(-D.gimbalRateDeg, ':');
-grid on
-xlabel('Time [s]');
-ylabel('Gimbal rate [deg/s]');
-end
-
-
-function plot_overlay(D, runs)
-figure('Name', 'Linear model vs Simulink');
-hold on
-colors = lines(numel(runs));
-for k = 1:numel(runs)
-    r = runs{k};
-    flight = D.flight([D.flight.name] == r.name);
-    tLin = (0:0.01:(r.tStop - r.thetaStepTime))';
-    y = step_delay(flight.Tcmd, tLin);
-    tCmd = tLin + r.thetaStepTime;
-    plot(r.t, r.thetaDeg, 'Color', colors(k, :), 'LineWidth', 1.3);
-    plot(tCmd, y * r.thetaStepDeg, '--', 'Color', colors(k, :), 'LineWidth', 1.1);
-end
-grid on
-xlabel('Time [s]');
-ylabel('Pitch [deg]');
-title('Solid: Simulink (sin, limits). Dashed: linear Control System Toolbox model');
-legend({ ...
-    [char(runs{1}.name) ' sim'], [char(runs{1}.name) ' linear'], ...
-    [char(runs{2}.name) ' sim'], [char(runs{2}.name) ' linear'], ...
-    [char(runs{3}.name) ' sim'], [char(runs{3}.name) ' linear']}, ...
-    'Location', 'southeast');
-end
-
-
-function plot_large(D, r)
-figure('Name', 'Liftoff 30 deg, actuator limits');
-tiledlayout(2, 1);
-nexttile
-plot(r.t, r.thetaCmdDeg, 'k--', r.t, r.thetaDeg, 'LineWidth', 1.2);
-grid on
-ylabel('Pitch [deg]');
-legend('command', 'pitch', 'Location', 'southeast');
-title('30 deg step at liftoff. Gimbal rate and angle limits are active.');
-nexttile
-plot(r.t, r.deltaCmdDeg, r.t, r.deltaDeg, 'LineWidth', 1.2);
-hold on
-yline(D.deltaMaxDeg, ':');
-yline(-D.deltaMaxDeg, ':');
-grid on
-xlabel('Time [s]');
-ylabel('Gimbal [deg]');
-legend('command', 'nozzle', 'limit', 'Location', 'southeast');
-end
-
-
-function plot_misalign(D, r)
-figure('Name', 'Thrust misalignment trim');
-flight = D.flight([D.flight.name] == r.name);
-tLin = (0:0.02:(r.tStop - r.misalignTime))';
-y = step_delay(flight.Tdist * flight.mu * deg2rad(r.misalignDeg), tLin);
-tiledlayout(2, 1);
-nexttile
-plot(r.t, r.thetaDeg, 'LineWidth', 1.2);
-hold on
-plot(tLin + r.misalignTime, rad2deg(y), '--', 'LineWidth', 1.1);
-grid on
-ylabel('Pitch [deg]');
-legend('Simulink', 'linear', 'Location', 'northeast');
-title(sprintf('%s, %.1f deg thrust misalignment at %.0f s', ...
-    r.name, r.misalignDeg, r.misalignTime));
-nexttile
-plot(r.t, r.deltaDeg, 'LineWidth', 1.2);
-hold on
-yline(-r.misalignDeg, ':');
-grid on
-xlabel('Time [s]');
-ylabel('Gimbal [deg]');
-legend('nozzle', 'trim (-misalignment)', 'Location', 'northeast');
 end
 
 

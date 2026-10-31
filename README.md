@@ -23,13 +23,20 @@ run_pitch_tvc
 What `run_pitch_tvc` does:
 
 1. Prints the gain-scheduled PID, margins, step-response numbers, and three sweeps (sensor delay, actuator bandwidth, static margin).
-2. Draws Bode, command-step, disturbance, and open-loop drift figures.
-3. Builds `boosterPitchTVC.slx` in the current folder and simulates it.
-4. Draws the nonlinear runs and prints a PASS/REVIEW checklist.
+2. Builds `boosterPitchTVC.slx` in the current folder and simulates it.
+3. Opens **one** dashboard window, `Pitch TVC`, and prints a PASS/REVIEW checklist.
+
+The dashboard is a browser figure with three tabs:
+
+| Tab | What is on it |
+|---|---|
+| **Responses** | 5 deg pitch, linear (dashed) over Simulink (solid); gimbal angle and rate against the stops; gust response on its own scale; stats table |
+| **Bode** | Loop gain for liftoff, max-q and landing, with phase margin, upward gain margin, gain-crossover circles and gain-margin squares |
+| **Limits and disturbances** | 30 deg liftoff step on the stops, thrust-misalignment trim, open-loop drift at max-q |
 
 | Command | What you get |
 |---|---|
-| `run_pitch_tvc` | Full design, model build, five simulations, plots, checklist |
+| `run_pitch_tvc` | Full design, model build, five simulations, one dashboard, checklist |
 | `design_pitch_controller(vehicle_params())` | Margins and linear plots only (no Simulink) |
 | `open_pitch_tuner("pid")` | PID Tuner on the liftoff plant |
 | `open_pitch_tuner("pid", "max-q")` | Same, at max-q |
@@ -219,6 +226,7 @@ D = design_pitch_controller(V);
 | `build_pitch_model.m` | Builds and saves `boosterPitchTVC.slx` |
 | `pitch_model_init.m` | Fills the workspace if you press Run on an empty session |
 | `run_pitch_tvc.m` | Top-level script |
+| `pitch_dashboard.m` | The single Pitch TVC window (responses, Bode, limits) |
 | `open_pitch_tuner.m` | PID Tuner or Control System Designer |
 
 `V.library` also holds the hop, orbital-booster and Starship numbers from `rocket_params.m` (masses, thrust, diameter, length, gimbal limit, `attWn`, `attZeta`, engine counts). The flight-condition table uses Super Heavy. Point a new condition at `V.library.hop` or `V.library.booster` if you want those vehicles on the same plant; their ascent states are not in the snapshot table.
@@ -237,12 +245,13 @@ D = design_pitch_controller(V);
 This repo was written and the algebra was checked with NumPy (frequency response, Padé closed-loop poles, and a fixed-step time simulation). MATLAB and Simulink were not executed here. On your side, `run_pitch_tvc` should finish without a red error, and then:
 
 1. **Margins.** The printed table matches the table in section 4 within a few tenths of a dB and a degree. `MATLAB margin()` at max-q is about 21 dB and 60 deg. `DC` of the command response is 1 (within about 0.01). `stable` is true on all three rows.
-2. **5 deg overlay.** On "Linear model vs Simulink", solid and dashed curves for each condition lie on top of each other up to the gust at 14 s. The checklist RMS is well under 0.05 deg. Peak gimbal is a few degrees, peak rate is under 20 deg/s.
-3. **30 deg liftoff.** Gimbal and gimbal rate both sit on their limits for part of the run. Pitch still heads toward 30 deg, more slowly than the 5 deg case. The checklist says both limits were reached.
-4. **Misalignment.** Gimbal ends near −0.5 deg. Pitch ends well under half a degree. The dashed linear curve is close to the solid one.
-5. **Open-loop drift figure.** The uncontrolled max-q trace walks away from 1 deg. The closed-loop trace holds.
-6. **Apps.** `open_pitch_tuner("pid", "max-q")` opens PID Tuner. `open_pitch_tuner("designer", "liftoff")` opens Control System Designer. The plant is SISO, stable in closed loop, phase margin near 60 deg.
-7. **Model.** `open_system("boosterPitchTVC")` shows Controller, Actuator and Plant. Scopes exist. Pressing Run with a fresh MATLAB session (no variables) still simulates liftoff, because of `pitch_model_init`.
+2. **One window.** A single figure named **Pitch TVC** opens. Responses, Bode, and Limits and disturbances are tabs in that window. No other plot windows open.
+3. **5 deg overlay.** On the Responses tab, solid and dashed pitch curves for each condition lie on top of each other up to the gust at 14 s. The checklist RMS is well under 0.05 deg. Peak gimbal is a few degrees, peak rate is under 20 deg/s. The stats table matches the printed margins.
+4. **30 deg liftoff.** On Limits and disturbances, gimbal and gimbal rate both sit on their limits for part of the run. Pitch still heads toward 30 deg, more slowly than the 5 deg case. The checklist says both limits were reached.
+5. **Misalignment and drift.** On that same tab, gimbal ends near −0.5 deg and the dashed linear pitch is close to the solid one. The uncontrolled max-q trace walks away from 1 deg, and the closed-loop trace holds.
+6. **Bode tab.** Three loop gains, circles at the gain crossover, squares at the upward gain-margin frequency, legend showing about 60 deg and 21 dB.
+7. **Apps.** `open_pitch_tuner("pid", "max-q")` opens PID Tuner. `open_pitch_tuner("designer", "liftoff")` opens Control System Designer. The plant is SISO, stable in closed loop, phase margin near 60 deg.
+8. **Model.** `open_system("boosterPitchTVC")` shows Controller, Actuator and Plant. Scopes exist. Pressing Run with a fresh MATLAB session (no variables) still simulates liftoff, because of `pitch_model_init`.
 
 If the RMS check says REVIEW, the usual causes are a solver warning on the rate limit, or a MATLAB release whose `step` and `To Workspace` timeseries differ slightly. The curves will still show whether the loop is doing the right thing.
 
