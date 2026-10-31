@@ -119,7 +119,7 @@ note = ['Solid pitch is the 5 deg Simulink run. Dashed pitch is the linear model
     'cells are blank. Stable is the order-6 Padé test. GM up is the classical ' ...
     'margin; GM down is how far gain can fall.'];
 uilabel(foot, 'Text', note, 'WordWrap', 'on', 'VerticalAlignment', 'top');
-uitable(foot, 'Data', blank_nan(table2cell(stats_table(D, runs, extras))), ...
+uitable(foot, 'Data', cells_for_uitable(stats_table(D, runs, extras)), ...
     'ColumnName', {'Condition', 'Stable', 'PM [deg]', 'GM up [dB]', 'GM down [dB]', ...
     'wc [rad/s]', 'Rise [s]', 'Overshoot [%]', 'Ts 5% [s]', 'Ts 2% [s]', ...
     'Peak gimbal [deg]', 'Peak rate [deg/s]', 'On angle [s]', 'On rate [s]', ...
@@ -142,7 +142,7 @@ for k = 1:numel(D.flight)
     [w, magDb, phaseDeg] = loop_bode(f.L);
     c = colors(k, :);
     m = f.margins;
-    names{k} = sprintf('%s   PM %.0f deg   GM %.0f dB', f.name, m.pm, m.gmUp);
+    names{k} = sprintf('%s   PM %.0f deg   GM %.0f dB', as_char(f.name), m.pm, m.gmUp);
     semilogx(axMag, w, magDb, 'Color', c, 'LineWidth', 1.4);
     hold(axMag, 'on');
     semilogx(axPh, w, phaseDeg, 'Color', c, 'LineWidth', 1.4);
@@ -260,7 +260,7 @@ style_ax(axMp);
 xlabel(axMp, 'Time [s]');
 ylabel(axMp, 'Pitch [deg]');
 title(axMp, sprintf('%s, %.1f deg thrust misalignment: solid Simulink, dashed linear', ...
-    simMis.name, simMis.misalignDeg));
+    as_char(simMis.name), simMis.misalignDeg));
 legend(axMp, {'Simulink', 'linear'}, 'Location', 'northeast');
 
 plot(axMg, simMis.t, simMis.deltaDeg, 'Color', c, 'LineWidth', 1.3);
@@ -416,12 +416,84 @@ integEnd = rad2deg(r.integEnd);
 end
 
 
-function cells = blank_nan(cells)
-for k = 1:numel(cells)
-    value = cells{k};
-    if isnumeric(value) && isscalar(value) && isnan(value)
-        cells{k} = [];
+function cells = cells_for_uitable(T)
+% uitable rejects string, categorical, and nested cells. Every entry is a
+% char row or a numeric/logical scalar. Missing numbers become a blank.
+raw = table2cell(T);
+cells = cell(size(raw));
+for k = 1:numel(raw)
+    cells{k} = uitable_value(raw{k});
+end
+end
+
+
+function value = uitable_value(value)
+if isstring(value) || iscategorical(value)
+    value = as_char(value);
+    return
+end
+if iscell(value)
+    if numel(value) == 1
+        value = uitable_value(value{1});
+    else
+        value = as_char(value);
     end
+    return
+end
+if ischar(value)
+    value = reshape(value, 1, []);
+    return
+end
+if islogical(value)
+    if ~isscalar(value)
+        value = as_char(value);
+    end
+    return
+end
+if isnumeric(value)
+    if isempty(value) || (isscalar(value) && isnan(value))
+        value = '';
+        return
+    end
+    if ~isscalar(value)
+        value = value(1);
+    end
+    return
+end
+value = as_char(value);
+end
+
+
+function text = as_char(value)
+% Row char for titles, legends, and table text. string scalars are not char.
+if isstring(value) || iscategorical(value)
+    if isempty(value) || (isscalar(value) && all(ismissing(value)))
+        text = '';
+        return
+    end
+    value = char(value);
+elseif iscell(value)
+    parts = cell(1, numel(value));
+    for k = 1:numel(value)
+        parts{k} = as_char(value{k});
+    end
+    text = strjoin(parts, ', ');
+    return
+elseif isnumeric(value) || islogical(value)
+    if isempty(value)
+        text = '';
+        return
+    end
+    value = char(string(value));
+end
+if ischar(value)
+    text = reshape(value, 1, []);
+    return
+end
+try
+    text = reshape(char(string(value)), 1, []);
+catch
+    text = '';
 end
 end
 

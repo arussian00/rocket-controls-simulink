@@ -321,6 +321,8 @@ Roughly in the order they build on this loop:
 | `pitch_plant:NeedsCST` or a missing `tf` / `pid` | Control System Toolbox is not on this license. The design scripts need it. |
 | `build_pitch_model:NeedsSimulink` | Simulink is not on this license. `design_pitch_controller(vehicle_params())` still runs. |
 | `Invalid setting ... BackgroundColor` on Plant | `lightGreen` is not a Simulink colour. The plant now uses an `[r,g,b]` string, and a rejected colour or block position only warns. |
+| `Skipped LimitDataPoints` on the To Workspace logs | The block parameter is `MaxDataPoints`, set to `inf`. A missing optional name is no longer warned about. |
+| `uitable` ... `Values within a cell array must be numeric, logical, or char` | The stats table was handing `uitable` string scalars. Every cell is now a number or a char row. |
 | Algebraic loop or rate-limiter warning on the 30 deg before run | Possible while the gimbal integrators sit on the stops. The governor-on run and the 5 deg runs should be quiet. |
 | `margin` shows about 19 dB, and you also see a large negative margin in `allmargin` | That negative one is the downward margin from the integrator (about 38 dB at max-q). The report prints it as "Downward gain margin". The closed loop is stable when `stable` is true. |
 | `isstable` / internal delays | Fixed on this branch. Stability is a Padé test. Re-run `run_pitch_tvc`. A warning that names Padé means that one call could not use the exact delay. |

@@ -414,13 +414,15 @@ end
 function add_log(parent, name, varName, pos)
 % Timeseries is what run_pitch_tvc reads. Structure With Time is the
 % fallback unpack_log already accepts, if this release lacks Timeseries.
+% MaxDataPoints is the current name; LimitDataPoints is the old one.
+% Probe each name quietly so a missing parameter does not warn.
 path = add_std('simulink/Sinks/To Workspace', parent, name, pos, ...
     'VariableName', varName, 'SampleTime', '-1');
-try
-    set_param(path, 'SaveFormat', 'Timeseries', 'LimitDataPoints', 'off');
-catch
+if ~try_param(path, 'SaveFormat', 'Timeseries')
     try_set(path, 'SaveFormat', 'Structure With Time');
-    try_set(path, 'LimitDataPoints', 'off');
+end
+if ~try_param(path, 'MaxDataPoints', 'inf')
+    try_param(path, 'LimitDataPoints', 'off');
 end
 end
 
@@ -520,6 +522,18 @@ function paint(block, color)
 % Named colours Simulink accepts, or an '[r, g, b]' string with each
 % channel in 0..1. lightGreen is not in the named list.
 try_set(block, 'BackgroundColor', color);
+end
+
+
+function ok = try_param(block, name, value)
+% True when Simulink accepts the setting. A miss is silent: callers decide
+% whether to try another name or to warn.
+try
+    set_param(block, name, value);
+    ok = true;
+catch
+    ok = false;
+end
 end
 
 
