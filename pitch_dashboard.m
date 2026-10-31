@@ -1,4 +1,4 @@
-function fig = pitch_dashboard(D, simNominal, simBefore, simAfter, simMis, schedule, traj, simLR, trade)
+function fig = pitch_dashboard(D, simNominal, simBefore, simAfter, simMis, schedule, traj, simLR, trade, simLRoff)
 %PITCH_DASHBOARD  One window for the pitch-TVC runs.
 %
 %   fig = pitch_dashboard(D, simNominal, simBefore, simAfter, simMis, schedule, traj)
@@ -54,7 +54,7 @@ build_stats(tabStats, D, simNominal, [{simBefore, simAfter}, simLR]);
 build_bode(tabBode, D, colors);
 build_large(tabLarge, D, simBefore, simAfter, colors);
 build_disturbances(tabDist, D, simMis, colors);
-build_load_relief(tabLR, D, simLR, trade);
+build_load_relief(tabLR, D, simLR, trade, simLRoff);
 build_flight(tabFlight, D, schedule, traj);
 
 fig.Visible = 'on';
@@ -145,7 +145,8 @@ uit = uitable(g, 'Data', cells_for_uitable(stats_table(D, runs, extras)), ...
     'ColumnName', {'Condition', 'Stable', 'PM [deg]', 'GM up [dB]', 'GM down [dB]', ...
     'wc [rad/s]', 'Rise [s]', 'Overshoot [%]', 'Ts 5% [s]', 'Ts 2% [s]', ...
     'Peak gimbal [deg]', 'Peak rate [deg/s]', 'On angle [s]', 'On rate [s]', ...
-    'Integrator [deg/s]', 'Peak q alpha [kPa deg]', 'Peak drift [m]'}, ...
+    'Integrator [deg/s]', 'Peak q alpha [kPa deg]', 'Peak drift [m]', ...
+    'Final drift [m]'}, ...
     'ColumnSortable', true, 'RowName', {}, 'FontSize', 11);
 uit.Layout.Row = 2;
 uit.Layout.Column = 1;
@@ -295,7 +296,7 @@ safe_layout_xlabel(tl, 'Time [s]', axDr);
 end
 
 
-function build_load_relief(parent, D, simLR, trade)
+function build_load_relief(parent, D, simLR, trade, simLRoff)
 tl = make_tiles(parent, 2, 2);
 axQa = next_ax(tl);
 axY = next_ax(tl);
@@ -316,6 +317,10 @@ for k = 1:n
     hold(axQa, 'on');
     plot(axY, r.t, r.drift, 'Color', col, 'LineWidth', 1.3);
     hold(axY, 'on');
+    if nargin >= 5 && numel(simLRoff) >= k
+        plot(axY, simLRoff{k}.t, simLRoff{k}.drift, '--', 'Color', col, ...
+            'LineWidth', 1.0, 'HandleVisibility', 'off');
+    end
     plot(axGim, r.t, r.deltaDeg, 'Color', col, 'LineWidth', 1.3);
     hold(axGim, 'on');
     names{k} = as_char(r.label);
@@ -327,7 +332,7 @@ ylabel(axQa, 'q alpha [kPa deg]');
 title(axQa, 'Load');
 small_legend(axQa, names);
 ylabel(axY, 'Drift [m]');
-title(axY, 'Lateral drift');
+title(axY, 'Drift, dashed is correction off');
 small_legend(axY, names);
 ylabel(axGim, 'Gimbal [deg]');
 title(axGim, 'Gimbal through max-q');
@@ -338,15 +343,16 @@ xlabel(axY, 'Time [s]');
 xlabel(axGim, 'Time [s]');
 
 style_ax(axTrade);
-plot(axTrade, trade.peakDrift, trade.peakQa, '-o', 'LineWidth', 1.2);
+plot(axTrade, trade.peakDriftOff, trade.peakQaOff, '--', 'LineWidth', 1.1);
 hold(axTrade, 'on');
+plot(axTrade, trade.peakDrift, trade.peakQa, '-o', 'LineWidth', 1.2);
 [~, iMark] = min(abs(trade.blend - trade.current));
 plot(axTrade, trade.peakDrift(iMark), trade.peakQa(iMark), 'ko', ...
     'MarkerFaceColor', 'k', 'MarkerSize', 8);
 xlabel(axTrade, 'Peak drift [m]');
 ylabel(axTrade, 'Peak |q alpha| [kPa deg]');
 title(axTrade, sprintf('Trade, marker at %.1f', trade.current));
-small_legend(axTrade, {'sweep', 'current'});
+small_legend(axTrade, {'correction off', 'correction on', 'current'});
 end
 
 
@@ -425,6 +431,7 @@ tOnRate = nan(n, 1);
 integEnd = nan(n, 1);
 peakQa = nan(n, 1);
 peakDrift = nan(n, 1);
+finalDrift = nan(n, 1);
 for k = 1:nFlight
     f = D.flight(k);
     r = match_run(runs, f.name);
@@ -434,7 +441,7 @@ for k = 1:nFlight
     ts5(k) = f.step5.SettlingTime;
     ts2(k) = f.step2.SettlingTime;
     [peakGim(k), peakRate(k), tOnAngle(k), tOnRate(k), integEnd(k), ...
-        peakQa(k), peakDrift(k)] = sim_cells(r);
+        peakQa(k), peakDrift(k), finalDrift(k)] = sim_cells(r);
 end
 liftoff = D.flight(1);
 for k = 1:numel(extras)
@@ -451,14 +458,14 @@ for k = 1:numel(extras)
         condition(row) = string(r.name);
     end
     [peakGim(row), peakRate(row), tOnAngle(row), tOnRate(row), integEnd(row), ...
-        peakQa(row), peakDrift(row)] = sim_cells(r);
+        peakQa(row), peakDrift(row), finalDrift(row)] = sim_cells(r);
 end
 T = table(condition, stable, pm, gmUp, gmDown, wc, rise, overshoot, ts5, ts2, ...
-    peakGim, peakRate, tOnAngle, tOnRate, integEnd, peakQa, peakDrift, ...
+    peakGim, peakRate, tOnAngle, tOnRate, integEnd, peakQa, peakDrift, finalDrift, ...
     'VariableNames', {'Condition', 'Stable', 'PM_deg', 'GM_up_dB', 'GM_down_dB', ...
     'wc_rad_s', 'Rise_s', 'Overshoot_pct', 'Ts5_s', 'Ts2_s', ...
     'PeakGimbal_deg', 'PeakRate_deg_s', 'OnAngle_s', 'OnRate_s', 'Integ_deg_s', ...
-    'PeakQa_kPa_deg', 'PeakDrift_m'});
+    'PeakQa_kPa_deg', 'PeakDrift_m', 'FinalDrift_m'});
 end
 
 
@@ -476,7 +483,7 @@ wc = f.margins.wc;
 end
 
 
-function [peakGim, peakRate, tOnAngle, tOnRate, integEnd, peakQa, peakDrift] = sim_cells(r)
+function [peakGim, peakRate, tOnAngle, tOnRate, integEnd, peakQa, peakDrift, finalDrift] = sim_cells(r)
 peakGim = max(abs(r.deltaDeg));
 peakRate = max(abs(r.rateDeg));
 tOnAngle = r.tOnAngle;
@@ -484,9 +491,11 @@ tOnRate = r.tOnRate;
 integEnd = rad2deg(r.integEnd);
 peakQa = NaN;
 peakDrift = NaN;
+finalDrift = NaN;
 if isfield(r, 'reportLoad') && r.reportLoad
     peakQa = r.peakQa;
     peakDrift = r.peakDrift;
+    finalDrift = r.finalDrift;
 end
 end
 

@@ -132,7 +132,18 @@ V.windShearTime = 46;                         % [s]
 V.windGust = 9;                               % [m/s] peak of the 1-cosine
 V.windGustStart = 42;                         % [s]
 V.windGustDur = 8;                            % [s]
-V.loadReliefStop = 110;                       % [s] through the post-max-q fade
+V.loadReliefStop = 143;                       % [s] end of ascent, just before the flip
+
+% Drift correction. A lateral PD adds a few degrees to the attitude command
+% after dynamic pressure falls. driftSched = driftCorrOn * (1 - q/qEngage),
+% so the loop is off through the max-q bucket and fades in as load relief
+% fades out. Gains are wn = 0.10 rad/s, zeta = 1 at thrust/mass = 32 m/s^2,
+% the highest acceleration late in ascent (the highest outer-loop gain).
+V.driftCorrOn = 1;                            % 1 on, 0 off
+V.driftKy = 3.13e-4;                          % [rad/m] position gain
+V.driftKvy = 6.25e-3;                         % [rad/(m/s)] velocity gain
+V.driftCmdLimitDeg = 4;                       % [deg]
+V.driftCmdLimit = deg2rad(V.driftCmdLimitDeg);
 
 %% Flight conditions
 % max-q mass, speed and altitude are a snapshot of the companion stack

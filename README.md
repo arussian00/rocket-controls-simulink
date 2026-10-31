@@ -131,15 +131,17 @@ Anti-windup is the backstop, not the strategy. Back-calculation runs on the rate
 
 The wind through that window is a shear plus a discrete gust. The shear grows from 0 at liftoff to **12 m/s at T+46 s** and then holds. The gust is a **1-cosine of peak 9 m/s**, starting at T+42 s and lasting 8 s, so it peaks at T+46 s on top of the shear (21 m/s total, about 4.7 deg of wind angle at 259 m/s).
 
-A NumPy check of that 110 s window, governor on, gives:
+After q drops below 12 kPa, a lateral PD steers back toward the reference path. `driftCorrOn` (default 1) switches it. The command is `driftSched * sat(-(driftKy*y + driftKvy*v), +/- driftCmdLimit)` with `driftSched = driftCorrOn * (1 - q/qEngage)`, so it is off through the max-q bucket and fades in as load relief fades out. It is added to the attitude command before the prefilter, so the step-2 governor still limits it. The gains are `driftKy = 3.13e-4` rad/m and `driftKvy = 6.25e-3` rad/(m/s), sized for a 0.10 rad/s, zeta 1 outer loop at thrust/mass = 32 m/s² (late ascent). The attitude contribution is limited to **±4 deg**.
 
-| `lr_blend` | Peak \|q·alpha\| | Peak \|drift\| | Peak \|gimbal\| |
-|---|---|---|---|
-| 0 | 104 kPa·deg | 97 m | 0.02 deg |
-| 0.5 | 66 kPa·deg | 1280 m | 0.28 deg |
-| 1 | 31 kPa·deg | 2660 m | 0.58 deg |
+The run ends at **T+143 s**, just before the flip cuts the engines. A NumPy check with the correction on:
 
-The gimbal stays far from the ±15 deg and ±20 deg/s stops. Drift is the integral of thrust pointed off the velocity vector while the body weathervanes. It keeps the lateral velocity after q falls, so the peak is at the end of the 110 s run. The centre of gravity is still fixed at mid-length.
+| `lr_blend` | Peak \|q·alpha\| | Peak \|drift\| | Final drift | Peak \|gimbal\| |
+|---|---|---|---|---|
+| 0 | 104 kPa·deg | 71 m | 6 m | 0.02 deg |
+| 0.5 | 66 kPa·deg | 1220 m | 770 m | 0.29 deg |
+| 1 | 31 kPa·deg | 3020 m | 2960 m | 0.58 deg |
+
+q·alpha is essentially the same as with the correction off, so the two loops are not fighting in the bucket. The outer loop, closed, is about **50 deg / 16 dB** near T+110 s and about **47 deg / 14 dB** near T+140 s (Padé stability on the same delay model). The attitude loop stays at about 64 deg and 19.4 dB. The centre of gravity is still fixed at mid-length, and guidance does not continue after the engines shut down for the flip.
 
 `isstable` cannot judge a loop once `feedback` has turned the sensor delay into an internal delay. The `stable` column is therefore a 6th-order Padé model of that same loop (orders 4 and 6 are both checked). `margin`, `allmargin`, Bode and the step responses keep the exact delay. If a release refuses the exact delay in `step`, `bode` or the tuner apps, that call falls back to the Padé model and prints a warning.
 
@@ -281,6 +283,7 @@ D = design_pitch_controller(V);
 | `pitch_model_init.m` | Fills the workspace if you press Run on an empty session |
 | `run_pitch_tvc.m` | Top-level script |
 | `load_relief_wind.m` | Shear plus 1-cosine crosswind through max-q |
+| `drift_correction_margins.m` | Outer lateral-loop margins with the sensor delay |
 | `booster_trajectory.m` | Loads the Super Heavy time history |
 | `make_booster_trajectory.m` | Regenerates that table with ode45 from matlab-rocket-sim |
 | `flight_margin_schedule.m` | Margins along the flight (scheduled and fixed-gain) |
@@ -311,7 +314,7 @@ This repo was written and the algebra was checked with NumPy (frequency response
 3. **5 deg overlay.** On the Responses tab, solid and dashed pitch curves for each condition lie on top of each other up to the gust at 14 s. The checklist RMS is about 0.03 deg, under 0.05. Peak gimbal is a few degrees, peak rate is under 20 deg/s. The Stats tab matches the printed margins, and the two 30 deg rows are at the bottom.
 4. **30 deg liftoff, before and after.** On the 30 deg step tab, orange is the governor off and blue is the governor on. Before: gimbal rate on the ±20 deg/s stop for on the order of 1.7 s, angle on or at the ±15 deg stop, pitch ending near 29.5 deg. After: peak gimbal near 7 deg, peak rate near 18 deg/s, both stop-times at 0, pitch ending near 30.6 deg. The integrator traces stay near zero. Stop times are in the Stats tab. The checklist PASSes the before row when the rate-stop time is at least 0.2 s, and the after row when both stop-times are under 0.05 s and the peaks stay off the stops.
 5. **Misalignment and open-loop drift.** On Disturbances, gimbal ends near −0.5 deg and the dashed linear pitch is close to the solid one. The uncontrolled max-q trace walks away from 1 deg, and the closed-loop trace holds.
-5b. **Load relief.** On Load relief, the three traces are `lr_blend` 0, 0.5 and 1. Peak q·alpha falls from about 104 kPa·deg to about 31 kPa·deg, peak drift rises from about 100 m to about 2.7 km, and the gimbal peak stays under 1 deg. The trade plot's black marker is the default 0.5. The Stats tab repeats those three peaks. The checklist line says the margins are still about 64 deg and 19.4 dB.
+5b. **Load relief.** On Load relief, solid drift is the correction on and dashed is the correction off, for `lr_blend` 0, 0.5 and 1. Peak q·alpha falls from about 104 kPa·deg to about 31 kPa·deg. With the correction on, final drift is about 6 m, 770 m and 3.0 km at those three settings, and the gimbal peak stays under 1 deg. The trade curve is solid for the correction and dashed without it. The black marker is the default 0.5. The Stats tab adds peak q·alpha, peak drift and final drift. The checklist prints the attitude-loop margins (about 64 deg and 19.4 dB) and the outer-loop margins (about 47 to 50 deg and 14 to 16 dB).
 6. **Bode tab.** Three loop gains, circles at the gain crossover, squares at the upward gain-margin frequency, legend showing about 64 deg and 19 dB.
 6b. **Along the flight.** The scheduled curve stays near 64 deg and 19.4 dB, with 0 samples under the floor. The fixed liftoff-gain curve drops under the red floor in boostback (worst about 5 deg and 0.8 dB near t = 185 s). The printed worst-case lines should match that picture within a few tenths. Expect more fixed-gain samples under the floor than the previous 11, because `Kd` is 2.
 7. **Apps.** `open_pitch_tuner("pid", "max-q")` opens PID Tuner. `open_pitch_tuner("designer", "liftoff")` opens Control System Designer. The plant is SISO, stable in closed loop, phase margin near 64 deg.

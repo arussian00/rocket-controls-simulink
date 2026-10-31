@@ -103,6 +103,8 @@ add_line(mdl, 'theta_cmd/1', 'log_thetaCmd/1', 'autorouting', 'on');
 add_line(mdl, 'Controller/2', 'log_integ/1', 'autorouting', 'on');
 add_line(mdl, 'Plant/3', 'log_alpha/1', 'autorouting', 'on');
 add_line(mdl, 'Plant/4', 'log_drift/1', 'autorouting', 'on');
+add_line(mdl, 'Plant/4', 'Controller/6', 'autorouting', 'on');
+add_line(mdl, 'Plant/6', 'Controller/7', 'autorouting', 'on');
 add_line(mdl, 'Plant/5', 'log_qAlpha/1', 'autorouting', 'on');
 
 name_line(mdl, 'Controller/1', 'delta_cmd');
@@ -144,6 +146,8 @@ add_in(sub, 'theta', 2, [20 118 50 132]);
 add_in(sub, 'q', 3, [20 208 50 222]);
 add_in(sub, 'delta', 4, [20 520 50 534]);
 add_in(sub, 'wind', 5, [20 700 50 714]);
+add_in(sub, 'drift', 6, [20 860 50 874]);
+add_in(sub, 'vlat', 7, [20 910 50 924]);
 
 add_std('simulink/Continuous/Transfer Fcn', sub, 'cmd_prefilter', [420 15 510 55], ...
     'Numerator', '[1]', 'Denominator', '[cmdTau 1]');
@@ -183,6 +187,28 @@ add_std('simulink/Math Operations/Product', sub, 'prod_traj', [680 20 720 60], .
 add_std('simulink/Math Operations/Product', sub, 'prod_zero', [680 90 720 130], ...
     'Inputs', '**');
 add_sum(sub, 'sum_blend', '++', [760 30 790 90]);
+
+% Drift PD. Authority is (1 - q schedule) so it is off in the max-q bucket
+% and fades in as load relief fades out. The limited command joins the
+% blend before the prefilter, so the governor still shapes it.
+add_std('simulink/Math Operations/Gain', sub, 'gain_driftKy', [90 860 160 890], ...
+    'Gain', 'driftKy');
+add_std('simulink/Math Operations/Gain', sub, 'gain_driftKvy', [90 910 160 940], ...
+    'Gain', 'driftKvy');
+add_sum(sub, 'sum_pd', '++', [200 870 230 930]);
+add_std('simulink/Math Operations/Gain', sub, 'gain_negPd', [260 885 310 915], ...
+    'Gain', '-1');
+add_std('simulink/Sources/Constant', sub, 'const_driftLim', [260 960 340 990], ...
+    'Value', 'driftCmdLimit');
+add_std('simulink/Math Operations/Gain', sub, 'gain_negDriftLim', [360 960 410 990], ...
+    'Gain', '-1');
+add_dynsat(sub, 'sat_drift', [440 870 500 940]);
+add_sum(sub, 'sum_fade', '+-', [560 800 590 850]);
+add_std('simulink/Math Operations/Gain', sub, 'gain_driftOn', [630 805 700 835], ...
+    'Gain', 'driftCorrOn');
+add_std('simulink/Math Operations/Product', sub, 'prod_driftCmd', [760 820 800 860], ...
+    'Inputs', '**');
+add_sum(sub, 'sum_cmd', '++', [860 40 890 90]);
 
 % Authority left after a slow measure of gimbal trim.
 add_std('simulink/Continuous/Transfer Fcn', sub, 'trim_lpf', [90 505 180 545], ...
@@ -285,7 +311,23 @@ wire('gain_blend/1', 'prod_zero/1');
 wire('sum_zero/1', 'prod_zero/2');
 wire('prod_traj/1', 'sum_blend/1');
 wire('prod_zero/1', 'sum_blend/2');
-wire('sum_blend/1', 'cmd_prefilter/1');
+wire('drift/1', 'gain_driftKy/1');
+wire('vlat/1', 'gain_driftKvy/1');
+wire('gain_driftKy/1', 'sum_pd/1');
+wire('gain_driftKvy/1', 'sum_pd/2');
+wire('sum_pd/1', 'gain_negPd/1');
+wire('const_driftLim/1', 'sat_drift/1');
+wire('gain_negPd/1', 'sat_drift/2');
+wire('const_driftLim/1', 'gain_negDriftLim/1');
+wire('gain_negDriftLim/1', 'sat_drift/3');
+wire('const_one/1', 'sum_fade/1');
+wire('sat_qsched/1', 'sum_fade/2');
+wire('sum_fade/1', 'gain_driftOn/1');
+wire('gain_driftOn/1', 'prod_driftCmd/1');
+wire('sat_drift/1', 'prod_driftCmd/2');
+wire('sum_blend/1', 'sum_cmd/1');
+wire('prod_driftCmd/1', 'sum_cmd/2');
+wire('sum_cmd/1', 'cmd_prefilter/1');
 wire('theta/1', 'delay_theta/1');
 wire('q/1', 'delay_q/1');
 wire('delay_q/1', 'rate_filter/1');
@@ -463,6 +505,7 @@ add_out(sub, 'q', 2, [1020 140 1050 154]);
 add_out(sub, 'alpha', 3, [760 230 790 244]);
 add_out(sub, 'drift', 4, [1200 333 1230 347]);
 add_out(sub, 'qAlpha', 5, [960 203 990 217]);
+add_out(sub, 'vlat', 6, [1120 250 1150 264]);
 
 wirep = @(src, dst) add_line(sub, src, dst, 'autorouting', 'on');
 wirep('delta/1', 'sum_angle/1');
@@ -500,6 +543,7 @@ wirep('prod_thrust/1', 'sum_lat/1');
 wirep('prod_aero/1', 'sum_lat/2');
 wirep('sum_lat/1', 'int_v/1');
 wirep('int_v/1', 'int_y/1');
+wirep('int_v/1', 'vlat/1');
 wirep('int_y/1', 'drift/1');
 wirep('lookup_qdyn/1', 'prod_qa/1');
 wirep('sum_alpha/1', 'prod_qa/2');
