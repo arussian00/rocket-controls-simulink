@@ -1,0 +1,14 @@
+# build_pitch_model.m writes this when the project is run in Simulink.
+# It cannot be generated on a machine without MATLAB, so it is not committed.
+*.slx
+*.slxc
+*.slxp
+slprj/
+
+# MATLAB session debris
+*.asv
+*.autosave
+*.mex*
+*.m~
+*.slx.r*
+*.slx.autosave
