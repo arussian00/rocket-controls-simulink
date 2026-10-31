@@ -26,13 +26,15 @@ What `run_pitch_tvc` does:
 2. Builds `boosterPitchTVC.slx` in the current folder and simulates it.
 3. Opens **one** dashboard window, `Pitch TVC`, and prints a PASS/REVIEW checklist.
 
-The dashboard is a browser figure with four tabs:
+The dashboard is a browser figure. The tab group sits in a grid that fills the window, and each tab is a tiled layout of at most four plots. Axes toolbars are hidden so they do not cover the curves.
 
 | Tab | What is on it |
 |---|---|
-| **Responses** | 5 deg pitch, linear (dashed) over Simulink (solid); gimbal angle and rate against the stops; gust response on its own scale; stats table, including the 30 deg before/after rows |
-| **Bode** | Loop gain for liftoff, max-q and landing, with phase margin, upward gain margin, gain-crossover circles and gain-margin squares |
-| **Limits and disturbances** | 30 deg liftoff step with the command governor off and on (pitch, gimbal angle, gimbal rate, integrator, time on the stops), thrust-misalignment trim, open-loop drift at max-q |
+| **Responses** | 2×2: 5 deg pitch (solid Simulink, dashed linear), gust, gimbal angle, gimbal rate |
+| **Stats** | The numbers table, including the 30 deg before/after rows, time on the stops, and the integrator |
+| **Bode** | Loop gain and phase for liftoff, max-q and landing |
+| **30 deg step** | 2×2: governor off (before) and on (after) for pitch, integrator, gimbal angle, and gimbal rate |
+| **Disturbances** | Thrust-misalignment pitch and gimbal, and the max-q open-loop drift |
 | **Along the flight** | Phase and gain margins versus time for the 1/mu schedule and for a frozen liftoff gain. Black dots are the three design points. Red x marks samples under 6 dB or 30 deg |
 
 | Command | What you get |
@@ -267,7 +269,7 @@ D = design_pitch_controller(V);
 | `loop_margins.m` | Exact-delay margins and the Padé stability test |
 | `data/superheavy_booster_trajectory.csv` | RK4 trajectory snapshot (mass, thrust, q, mu, lambda, CG, CP) |
 | `tools/build_superheavy_trajectory.py` | Script that wrote the snapshot |
-| `pitch_dashboard.m` | The single Pitch TVC window (responses, Bode, limits) |
+| `pitch_dashboard.m` | The single Pitch TVC window (responses, stats, Bode, 30 deg step, disturbances, flight) |
 | `open_pitch_tuner.m` | PID Tuner or Control System Designer |
 
 `V.library` also holds the hop, orbital-booster and Starship numbers from `rocket_params.m` (masses, thrust, diameter, length, gimbal limit, `attWn`, `attZeta`, engine counts). The flight-condition table uses Super Heavy. Point a new condition at `V.library.hop` or `V.library.booster` if you want those vehicles on the same plant; their ascent states are not in the snapshot table.
@@ -286,9 +288,9 @@ D = design_pitch_controller(V);
 This repo was written and the algebra was checked with NumPy (frequency response, Padé closed-loop poles, and a fixed-step time simulation). MATLAB and Simulink were not executed here. On your side, `run_pitch_tvc` should finish without a red error, and then:
 
 1. **Margins.** The printed table matches the table in section 4 within a few tenths of a dB and a degree. `MATLAB margin()` at max-q is about 19.4 dB and 64 deg. `DC` of the command response is 1 (within about 0.01). `stable` is true on all three rows. The command-governor line prints a rate floor of 12.5 deg/s and a lead floor of 6 deg.
-2. **One window.** A single figure named **Pitch TVC** opens, with tabs Responses, Bode, Limits and disturbances, and Along the flight. No other plot windows open.
-3. **5 deg overlay.** On the Responses tab, solid and dashed pitch curves for each condition lie on top of each other up to the gust at 14 s. The checklist RMS is about 0.03 deg, under 0.05. Peak gimbal is a few degrees, peak rate is under 20 deg/s. The stats table matches the printed margins, and the two 30 deg rows are at the bottom.
-4. **30 deg liftoff, before and after.** On Limits and disturbances, the orange trace is the governor off and the blue trace is the governor on. Before: gimbal rate on the ±20 deg/s stop for on the order of 1.7 s, angle on or at the ±15 deg stop, pitch ending near 29.5 deg. After: peak gimbal near 7 deg, peak rate near 18 deg/s, both stop-times at 0, pitch ending near 30.6 deg. The integrator traces stay near zero. The checklist PASSes the before row when the rate-stop time is at least 0.2 s, and the after row when both stop-times are under 0.05 s and the peaks stay off the stops.
+2. **One window.** A single figure named **Pitch TVC** fills the browser figure. Tabs: Responses, Stats, Bode, 30 deg step, Disturbances, Along the flight. Resizing the window stretches the plots. No other plot windows open.
+3. **5 deg overlay.** On the Responses tab, solid and dashed pitch curves for each condition lie on top of each other up to the gust at 14 s. The checklist RMS is about 0.03 deg, under 0.05. Peak gimbal is a few degrees, peak rate is under 20 deg/s. The Stats tab matches the printed margins, and the two 30 deg rows are at the bottom.
+4. **30 deg liftoff, before and after.** On the 30 deg step tab, orange is the governor off and blue is the governor on. Before: gimbal rate on the ±20 deg/s stop for on the order of 1.7 s, angle on or at the ±15 deg stop, pitch ending near 29.5 deg. After: peak gimbal near 7 deg, peak rate near 18 deg/s, both stop-times at 0, pitch ending near 30.6 deg. The integrator traces stay near zero. Stop times are in the Stats tab. The checklist PASSes the before row when the rate-stop time is at least 0.2 s, and the after row when both stop-times are under 0.05 s and the peaks stay off the stops.
 5. **Misalignment and drift.** On that same tab, gimbal ends near −0.5 deg and the dashed linear pitch is close to the solid one. The uncontrolled max-q trace walks away from 1 deg, and the closed-loop trace holds.
 6. **Bode tab.** Three loop gains, circles at the gain crossover, squares at the upward gain-margin frequency, legend showing about 64 deg and 19 dB.
 6b. **Along the flight.** The scheduled curve stays near 64 deg and 19.4 dB, with 0 samples under the floor. The fixed liftoff-gain curve drops under the red floor in boostback (worst about 5 deg and 0.8 dB near t = 185 s). The printed worst-case lines should match that picture within a few tenths. Expect more fixed-gain samples under the floor than the previous 11, because `Kd` is 2.
