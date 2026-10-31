@@ -1,4 +1,4 @@
-function fig = pitch_dashboard(D, simNominal, simBefore, simAfter, simMis, schedule, traj)
+function fig = pitch_dashboard(D, simNominal, simBefore, simAfter, simMis, schedule, traj, simLR, trade)
 %PITCH_DASHBOARD  One window for the pitch-TVC runs.
 %
 %   fig = pitch_dashboard(D, simNominal, simBefore, simAfter, simMis, schedule, traj)
@@ -46,13 +46,15 @@ tabStats = uitab(tabs, 'Title', 'Stats');
 tabBode = uitab(tabs, 'Title', 'Bode');
 tabLarge = uitab(tabs, 'Title', '30 deg step');
 tabDist = uitab(tabs, 'Title', 'Disturbances');
+tabLR = uitab(tabs, 'Title', 'Load relief');
 tabFlight = uitab(tabs, 'Title', 'Along the flight');
 
 build_responses(tabResp, D, simNominal, colors);
-build_stats(tabStats, D, simNominal, {simBefore, simAfter});
+build_stats(tabStats, D, simNominal, [{simBefore, simAfter}, simLR]);
 build_bode(tabBode, D, colors);
 build_large(tabLarge, D, simBefore, simAfter, colors);
 build_disturbances(tabDist, D, simMis, colors);
+build_load_relief(tabLR, D, simLR, trade);
 build_flight(tabFlight, D, schedule, traj);
 
 fig.Visible = 'on';
@@ -143,7 +145,7 @@ uit = uitable(g, 'Data', cells_for_uitable(stats_table(D, runs, extras)), ...
     'ColumnName', {'Condition', 'Stable', 'PM [deg]', 'GM up [dB]', 'GM down [dB]', ...
     'wc [rad/s]', 'Rise [s]', 'Overshoot [%]', 'Ts 5% [s]', 'Ts 2% [s]', ...
     'Peak gimbal [deg]', 'Peak rate [deg/s]', 'On angle [s]', 'On rate [s]', ...
-    'Integrator [deg/s]'}, ...
+    'Integrator [deg/s]', 'Peak q alpha [kPa deg]', 'Peak drift [m]'}, ...
     'ColumnSortable', true, 'RowName', {}, 'FontSize', 11);
 uit.Layout.Row = 2;
 uit.Layout.Column = 1;
@@ -293,6 +295,61 @@ safe_layout_xlabel(tl, 'Time [s]', axDr);
 end
 
 
+function build_load_relief(parent, D, simLR, trade)
+tl = make_tiles(parent, 2, 2);
+axQa = next_ax(tl);
+axY = next_ax(tl);
+axTrade = next_ax(tl);
+axGim = next_ax(tl);
+n = numel(simLR);
+names = cell(1, n);
+for k = 1:n
+    r = simLR{k};
+    c = [0.85 0.33 0.10; 0.00 0.45 0.74; 0.47 0.67 0.19];
+    if k <= size(c, 1)
+        col = c(k, :);
+    else
+        col = [0.2 0.2 0.2];
+    end
+    qa = rad2deg(r.qAlpha) / 1000;
+    plot(axQa, r.t, qa, 'Color', col, 'LineWidth', 1.3);
+    hold(axQa, 'on');
+    plot(axY, r.t, r.drift, 'Color', col, 'LineWidth', 1.3);
+    hold(axY, 'on');
+    plot(axGim, r.t, r.deltaDeg, 'Color', col, 'LineWidth', 1.3);
+    hold(axGim, 'on');
+    names{k} = as_char(r.label);
+end
+style_ax(axQa);
+style_ax(axY);
+style_ax(axGim);
+ylabel(axQa, 'q alpha [kPa deg]');
+title(axQa, 'Load');
+small_legend(axQa, names);
+ylabel(axY, 'Drift [m]');
+title(axY, 'Lateral drift');
+small_legend(axY, names);
+ylabel(axGim, 'Gimbal [deg]');
+title(axGim, 'Gimbal through max-q');
+small_legend(axGim, names);
+limit_lines(axGim, simLR{1}.t, D.deltaMaxDeg);
+xlabel(axQa, 'Time [s]');
+xlabel(axY, 'Time [s]');
+xlabel(axGim, 'Time [s]');
+
+style_ax(axTrade);
+plot(axTrade, trade.peakDrift, trade.peakQa, '-o', 'LineWidth', 1.2);
+hold(axTrade, 'on');
+[~, iMark] = min(abs(trade.blend - trade.current));
+plot(axTrade, trade.peakDrift(iMark), trade.peakQa(iMark), 'ko', ...
+    'MarkerFaceColor', 'k', 'MarkerSize', 8);
+xlabel(axTrade, 'Peak drift [m]');
+ylabel(axTrade, 'Peak |q alpha| [kPa deg]');
+title(axTrade, sprintf('Trade, marker at %.1f', trade.current));
+small_legend(axTrade, {'sweep', 'current'});
+end
+
+
 function build_flight(parent, D, S, traj)
 tl = make_tiles(parent, 2, 1);
 axPm = next_ax(tl);
@@ -366,6 +423,8 @@ peakRate = nan(n, 1);
 tOnAngle = nan(n, 1);
 tOnRate = nan(n, 1);
 integEnd = nan(n, 1);
+peakQa = nan(n, 1);
+peakDrift = nan(n, 1);
 for k = 1:nFlight
     f = D.flight(k);
     r = match_run(runs, f.name);
@@ -374,25 +433,32 @@ for k = 1:nFlight
     overshoot(k) = f.step5.Overshoot;
     ts5(k) = f.step5.SettlingTime;
     ts2(k) = f.step2.SettlingTime;
-    [peakGim(k), peakRate(k), tOnAngle(k), tOnRate(k), integEnd(k)] = sim_cells(r);
+    [peakGim(k), peakRate(k), tOnAngle(k), tOnRate(k), integEnd(k), ...
+        peakQa(k), peakDrift(k)] = sim_cells(r);
 end
 liftoff = D.flight(1);
 for k = 1:numel(extras)
     r = extras{k};
     row = nFlight + k;
-    [~, stable(row), pm(row), gmUp(row), gmDown(row), wc(row)] = margin_cells(liftoff);
+    baseFlight = liftoff;
+    if isfield(r, 'marginFrom') && strlength(string(r.marginFrom)) > 0
+        baseFlight = match_flight(D, r.marginFrom);
+    end
+    [~, stable(row), pm(row), gmUp(row), gmDown(row), wc(row)] = margin_cells(baseFlight);
     if isfield(r, 'label') && strlength(string(r.label)) > 0
         condition(row) = string(r.label);
     else
         condition(row) = string(r.name);
     end
-    [peakGim(row), peakRate(row), tOnAngle(row), tOnRate(row), integEnd(row)] = sim_cells(r);
+    [peakGim(row), peakRate(row), tOnAngle(row), tOnRate(row), integEnd(row), ...
+        peakQa(row), peakDrift(row)] = sim_cells(r);
 end
 T = table(condition, stable, pm, gmUp, gmDown, wc, rise, overshoot, ts5, ts2, ...
-    peakGim, peakRate, tOnAngle, tOnRate, integEnd, ...
+    peakGim, peakRate, tOnAngle, tOnRate, integEnd, peakQa, peakDrift, ...
     'VariableNames', {'Condition', 'Stable', 'PM_deg', 'GM_up_dB', 'GM_down_dB', ...
     'wc_rad_s', 'Rise_s', 'Overshoot_pct', 'Ts5_s', 'Ts2_s', ...
-    'PeakGimbal_deg', 'PeakRate_deg_s', 'OnAngle_s', 'OnRate_s', 'Integ_deg_s'});
+    'PeakGimbal_deg', 'PeakRate_deg_s', 'OnAngle_s', 'OnRate_s', 'Integ_deg_s', ...
+    'PeakQa_kPa_deg', 'PeakDrift_m'});
 end
 
 
@@ -410,12 +476,18 @@ wc = f.margins.wc;
 end
 
 
-function [peakGim, peakRate, tOnAngle, tOnRate, integEnd] = sim_cells(r)
+function [peakGim, peakRate, tOnAngle, tOnRate, integEnd, peakQa, peakDrift] = sim_cells(r)
 peakGim = max(abs(r.deltaDeg));
 peakRate = max(abs(r.rateDeg));
 tOnAngle = r.tOnAngle;
 tOnRate = r.tOnRate;
 integEnd = rad2deg(r.integEnd);
+peakQa = NaN;
+peakDrift = NaN;
+if isfield(r, 'reportLoad') && r.reportLoad
+    peakQa = r.peakQa;
+    peakDrift = r.peakDrift;
+end
 end
 
 

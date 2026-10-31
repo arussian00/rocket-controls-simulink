@@ -35,6 +35,7 @@ The dashboard is a browser figure. The tab group sits in a grid that fills the w
 | **Bode** | Loop gain and phase for liftoff, max-q and landing |
 | **30 deg step** | 2×2: governor off (before) and on (after) for pitch, integrator, gimbal angle, and gimbal rate |
 | **Disturbances** | Thrust-misalignment pitch and gimbal, and the max-q open-loop drift |
+| **Load relief** | Through max-q, for `lr_blend` 0, 0.5 and 1: q·alpha, lateral drift, the trade of those peaks, and gimbal angle |
 | **Along the flight** | Phase and gain margins versus time for the 1/mu schedule and for a frozen liftoff gain. Black dots are the three design points. Red x marks samples under 6 dB or 30 deg |
 
 | Command | What you get |
@@ -124,6 +125,22 @@ q_lim       = max(0.85 * a_avail / Kq,  1.25 * (5 deg) / 0.5 s)
 
 Anti-windup is the backstop, not the strategy. Back-calculation runs on the rate-command clip (`Kaw`) and on the acceleration clip (`Kaw/Kq`). On the 30 deg step the integrator stays near zero either way.
 
+### Load relief
+
+`V.lrBlend` in [0, 1] blends the attitude command before the prefilter and the governor. 0 holds the trajectory attitude. 1 commands the attitude that zeros angle of attack (the delayed pitch minus the measured alpha, which is the wind angle `wind/speed`). The dynamic-pressure schedule is `min(q/qEngage, 1)` with `qEngage = 12 kPa`, so the knob is fully on through the max-q bucket (about T+28 s to T+83 s on this trajectory) and fades below 12 kPa. Because the measured pitch cancels in that blend, the attitude-loop gain is unchanged. The margins with load relief active are the margins in the table above (about 64 deg and 19.4 dB).
+
+The wind through that window is a shear plus a discrete gust. The shear grows from 0 at liftoff to **12 m/s at T+46 s** and then holds. The gust is a **1-cosine of peak 9 m/s**, starting at T+42 s and lasting 8 s, so it peaks at T+46 s on top of the shear (21 m/s total, about 4.7 deg of wind angle at 259 m/s).
+
+A NumPy check of that 110 s window, governor on, gives:
+
+| `lr_blend` | Peak \|q·alpha\| | Peak \|drift\| | Peak \|gimbal\| |
+|---|---|---|---|
+| 0 | 104 kPa·deg | 97 m | 0.02 deg |
+| 0.5 | 66 kPa·deg | 1280 m | 0.28 deg |
+| 1 | 31 kPa·deg | 2660 m | 0.58 deg |
+
+The gimbal stays far from the ±15 deg and ±20 deg/s stops. Drift is the integral of thrust pointed off the velocity vector while the body weathervanes. It keeps the lateral velocity after q falls, so the peak is at the end of the 110 s run. The centre of gravity is still fixed at mid-length.
+
 `isstable` cannot judge a loop once `feedback` has turned the sensor delay into an internal delay. The `stable` column is therefore a 6th-order Padé model of that same loop (orders 4 and 6 are both checked). `margin`, `allmargin`, Bode and the step responses keep the exact delay. If a release refuses the exact delay in `step`, `bode` or the tuner apps, that call falls back to the Padé model and prints a warning.
 
 Loop gain used for margins, with `C(s) = Kp + Ki/s + Kd*s/(Tf*s+1)`:
@@ -210,10 +227,10 @@ theta_cmd (Step)
            +------------------------ theta, q -----------------+
 ```
 
-* **Controller** (light blue): 0.5 s command prefilter, 20 ms delay on pitch and rate, command governor (lead limit and rate limit from `mu`, gimbal trim, and the angle stop), cascade `Kth` / `Kq`, saturation of `a_cmd` at `±mu*deltaMax` with back-calculation, and `1/mu`. `mu`, `1/mu` and the acceleration limit are 1-D lookup tables versus time. A fourth input is the measured gimbal, for the trim filter. A second output is the attitude integrator, logged as `integ`. `shapeOn` selects the governor.
+* **Controller** (light blue): load-relief blend of the attitude command, then the 0.5 s prefilter, 20 ms delay on pitch and rate, command governor (lead limit and rate limit from `mu`, gimbal trim, and the angle stop), cascade `Kth` / `Kq`, saturation of `a_cmd` at `±mu*deltaMax` with back-calculation, and `1/mu`. `mu`, `1/mu`, dynamic pressure and speed are 1-D lookup tables versus time. A fourth input is the measured gimbal, for the trim filter. A fifth input is the wind. A second output is the attitude integrator, logged as `integ`. `shapeOn` selects the governor. `lrBlend` is the load-relief knob.
 * **Actuator** (orange): `wn^2` and `2*zeta*wn` around two integrators. The rate integrator saturates at `±gimbalRate`. The angle integrator saturates at `±deltaMax`.
-* **Plant** (green): `mu(t)*sin(delta + misalign) + lambda(t)*theta + gustAccPerWind*wind`, then two integrators. `mu` and `lambda` are the same lookup breakpoints. Misalignment and wind are Step blocks inside the plant.
-* Scopes on attitude, gimbal and gimbal rate. To Workspace logs `theta`, `q`, `delta`, `deltaCmd`, `gimbalRateMeas`, `thetaCmd` and `integ` as timeseries.
+* **Plant** (green): `mu(t)*sin(delta + misalign) + lambda(t)*alpha`, with `alpha = theta - wind/speed`, then two integrators. Lateral acceleration `(thrust/mass)*sin(theta) + (q*CNa*A/mass)*alpha` integrates to drift. `mu`, `lambda`, speed, dynamic pressure and the lateral gains share the lookup breakpoints. Misalignment is a Step inside the plant. Wind is the sum of the design gust Step and the `schedWind` table.
+* Scopes on attitude, gimbal and gimbal rate. To Workspace logs `theta`, `q`, `delta`, `deltaCmd`, `gimbalRateMeas`, `thetaCmd`, `integ`, `alpha`, `drift` and `qAlpha` as timeseries (`MaxDataPoints` `inf`).
 
 Every number the diagram uses is a base-workspace variable (`Kp`, `mu`, `lambdaAero`, `tStop`, ...). `apply_pitch_condition` writes them. If you press Run in the model with an empty workspace, `pitch_model_init` loads the liftoff case.
 
@@ -224,6 +241,7 @@ The nominal script runs:
 | Liftoff, max-q, landing | 5 deg step at 1 s | 15 m/s at 14 s | Three curves on top of each other. Gimbal a few degrees. Rate under 20 deg/s. |
 | Liftoff, 30 deg, governor off | 30 deg step | off | The before case. Gimbal rate sits on ±20 deg/s for about 1.7 s and the angle reaches the ±15 deg stop. Pitch ends near 29.5 deg. |
 | Liftoff, 30 deg, governor on | 30 deg step | off | The after case. Peak gimbal about 6.7 deg, peak rate about 18 deg/s, neither stop touched. Pitch ends near 30.6 deg. |
+| Load relief, `lr_blend` 0 to 1 | hold 0 deg, trajectory `mu(t)` | shear 12 m/s plus 9 m/s 1-cosine | q·alpha falls and lateral drift rises as the knob goes from 0 to 1. Gimbal stays near 0. |
 | Max-q trim | hold 0 deg | off | 0.5 deg misalignment at 2 s. Gimbal settles near −0.5 deg. Pitch returns toward 0. |
 
 Solver: `ode45`, relative tolerance `1e-6`, max step 5 ms, stop time from `tStop`.
@@ -262,6 +280,7 @@ D = design_pitch_controller(V);
 | `build_pitch_model.m` | Builds and saves `boosterPitchTVC.slx` |
 | `pitch_model_init.m` | Fills the workspace if you press Run on an empty session |
 | `run_pitch_tvc.m` | Top-level script |
+| `load_relief_wind.m` | Shear plus 1-cosine crosswind through max-q |
 | `booster_trajectory.m` | Loads the Super Heavy time history |
 | `make_booster_trajectory.m` | Regenerates that table with ode45 from matlab-rocket-sim |
 | `flight_margin_schedule.m` | Margins along the flight (scheduled and fixed-gain) |
@@ -269,16 +288,16 @@ D = design_pitch_controller(V);
 | `loop_margins.m` | Exact-delay margins and the Padé stability test |
 | `data/superheavy_booster_trajectory.csv` | RK4 trajectory snapshot (mass, thrust, q, mu, lambda, CG, CP) |
 | `tools/build_superheavy_trajectory.py` | Script that wrote the snapshot |
-| `pitch_dashboard.m` | The single Pitch TVC window (responses, stats, Bode, 30 deg step, disturbances, flight) |
+| `pitch_dashboard.m` | The single Pitch TVC window, including the Load relief tab |
 | `open_pitch_tuner.m` | PID Tuner or Control System Designer |
 
 `V.library` also holds the hop, orbital-booster and Starship numbers from `rocket_params.m` (masses, thrust, diameter, length, gimbal limit, `attWn`, `attZeta`, engine counts). The flight-condition table uses Super Heavy. Point a new condition at `V.library.hop` or `V.library.booster` if you want those vehicles on the same plant; their ascent states are not in the snapshot table.
 
 ## 9. Assumptions
 
-* Pitch only, in the plane. No yaw, roll, or lateral translation.
+* Pitch in the plane, plus a lateral acceleration integrated to drift for the load-relief trade. No yaw or roll. The centre of gravity stays at mid-length (fixed until a later mass-properties step).
 * Uniform rod, CG fixed at mid-length, one equivalent nozzle using the whole thrust (`V.gimbalThrustFraction = 1`, matching the companion). A real stack CG sits further aft, which shortens the gimbal arm and can move the static margin. Both are inputs: arm is `length/2`, margin is `staticMarginCal`.
-* The three design sims hold mass, thrust and `q` constant. The margin sweep and the Simulink lookups follow `mu(t)` and `lambda(t)` from the trajectory table. The 5 deg and 30 deg runs use the frozen liftoff, max-q or landing row.
+* The 5 deg and 30 deg sims hold mass, thrust and `q` constant. The margin sweep and the load-relief run follow `mu(t)`, `lambda(t)` and `q(t)` from the trajectory table. The centre of gravity does not move during the burn (left for a later step).
 * No bending, no slosh, no engine-out, no RCS. The companion's RCS covers torque the gimbal cannot; this loop is gimbal only, and the acceleration command is limited to what ±15 deg can produce.
 * No Simulink Control Design. The linear model is written with `tf` / `feedback`, not linearised out of the diagram. The diagram uses `sin`, so its small-signal gain at zero gimbal is the linear `mu`.
 * Actuator bandwidth, rate limit, delay, `C_Nα` and static margin are assumptions. Thrust, mass, geometry, throttle limits and the 15 deg stop are companion numbers.
@@ -288,10 +307,11 @@ D = design_pitch_controller(V);
 This repo was written and the algebra was checked with NumPy (frequency response, Padé closed-loop poles, and a fixed-step time simulation). MATLAB and Simulink were not executed here. On your side, `run_pitch_tvc` should finish without a red error, and then:
 
 1. **Margins.** The printed table matches the table in section 4 within a few tenths of a dB and a degree. `MATLAB margin()` at max-q is about 19.4 dB and 64 deg. `DC` of the command response is 1 (within about 0.01). `stable` is true on all three rows. The command-governor line prints a rate floor of 12.5 deg/s and a lead floor of 6 deg.
-2. **One window.** A single figure named **Pitch TVC** fills the browser figure. Tabs: Responses, Stats, Bode, 30 deg step, Disturbances, Along the flight. Resizing the window stretches the plots. No other plot windows open.
+2. **One window.** A single figure named **Pitch TVC** fills the browser figure. Tabs: Responses, Stats, Bode, 30 deg step, Disturbances, Load relief, Along the flight. Resizing the window stretches the plots. No other plot windows open.
 3. **5 deg overlay.** On the Responses tab, solid and dashed pitch curves for each condition lie on top of each other up to the gust at 14 s. The checklist RMS is about 0.03 deg, under 0.05. Peak gimbal is a few degrees, peak rate is under 20 deg/s. The Stats tab matches the printed margins, and the two 30 deg rows are at the bottom.
 4. **30 deg liftoff, before and after.** On the 30 deg step tab, orange is the governor off and blue is the governor on. Before: gimbal rate on the ±20 deg/s stop for on the order of 1.7 s, angle on or at the ±15 deg stop, pitch ending near 29.5 deg. After: peak gimbal near 7 deg, peak rate near 18 deg/s, both stop-times at 0, pitch ending near 30.6 deg. The integrator traces stay near zero. Stop times are in the Stats tab. The checklist PASSes the before row when the rate-stop time is at least 0.2 s, and the after row when both stop-times are under 0.05 s and the peaks stay off the stops.
-5. **Misalignment and drift.** On that same tab, gimbal ends near −0.5 deg and the dashed linear pitch is close to the solid one. The uncontrolled max-q trace walks away from 1 deg, and the closed-loop trace holds.
+5. **Misalignment and open-loop drift.** On Disturbances, gimbal ends near −0.5 deg and the dashed linear pitch is close to the solid one. The uncontrolled max-q trace walks away from 1 deg, and the closed-loop trace holds.
+5b. **Load relief.** On Load relief, the three traces are `lr_blend` 0, 0.5 and 1. Peak q·alpha falls from about 104 kPa·deg to about 31 kPa·deg, peak drift rises from about 100 m to about 2.7 km, and the gimbal peak stays under 1 deg. The trade plot's black marker is the default 0.5. The Stats tab repeats those three peaks. The checklist line says the margins are still about 64 deg and 19.4 dB.
 6. **Bode tab.** Three loop gains, circles at the gain crossover, squares at the upward gain-margin frequency, legend showing about 64 deg and 19 dB.
 6b. **Along the flight.** The scheduled curve stays near 64 deg and 19.4 dB, with 0 samples under the floor. The fixed liftoff-gain curve drops under the red floor in boostback (worst about 5 deg and 0.8 dB near t = 185 s). The printed worst-case lines should match that picture within a few tenths. Expect more fixed-gain samples under the floor than the previous 11, because `Kd` is 2.
 7. **Apps.** `open_pitch_tuner("pid", "max-q")` opens PID Tuner. `open_pitch_tuner("designer", "liftoff")` opens Control System Designer. The plant is SISO, stable in closed loop, phase margin near 64 deg.
@@ -305,7 +325,8 @@ Roughly in the order they build on this loop:
 
 | Next | Why |
 |---|---|
-| Command governor on large steps | Done for this pitch loop. The 30 deg command is rate-limited and lead-limited from the gimbal authority that is left. Anti-windup remains the backstop. Load relief, slosh, bending and grid fins are not in this step. |
+| Command governor on large steps | Done for this pitch loop. The 30 deg command is rate-limited and lead-limited from the gimbal authority that is left. Anti-windup remains the backstop. |
+| Max-q load relief | Done. `lr_blend` mixes trajectory tracking and a zero-alpha command, scheduled on dynamic pressure. Slosh, bending and grid fins are not in this step. The centre of gravity is still fixed. |
 | Yaw, and roll by differential gimbal | Same plant on the other axes. Roll needs a second actuator path; the companion is planar and has no roll state. |
 | Landing-burn guidance around this loop | The companion's `landingAccel` commands pitch (and throttle). Close it outside this attitude loop and keep the 15 deg / 30 deg tilt limits (`maxTiltDeg` is 15 on the hop and 30 on Super Heavy). |
 | Schedule `mu` and `lambda` along the flight | Done for this pitch loop (`flight_margin_schedule`, Simulink lookups, Along the flight tab). |

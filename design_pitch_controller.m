@@ -57,6 +57,18 @@ D.shapeE = D.etaAuth / max(D.Kp, 1e-6);      % e_lim = shapeE * a_avail
 D.qLimFloor = deg2rad(V.thetaStepDeg) / V.cmdTau * 1.25;
 D.eLimFloor = deg2rad(V.thetaStepDeg) * 1.2;
 D.deltaAvailFloor = V.deltaAvailFrac * V.gimbalMax;
+D.CNa = V.CNa;
+D.area = V.area;
+D.lrBlend = V.lrBlend;
+D.qEngage = V.qEngage;
+D.qPeak = V.qPeak;
+D.lrVfloor = V.lrVfloor;
+D.windShear = V.windShear;
+D.windShearTime = V.windShearTime;
+D.windGust = V.windGust;
+D.windGustStart = V.windGustStart;
+D.windGustDur = V.windGustDur;
+D.loadReliefStop = V.loadReliefStop;
 D.pid = pid(D.Kp, D.Ki, D.Kd, D.Tf);
 D.Ctf = tf(D.pid);
 
@@ -321,6 +333,11 @@ fprintf('Actuator %.1f Hz, zeta %.2f, rate limit %.0f deg/s, angle limit %.0f de
     V.actHz, V.actZeta, V.gimbalRateDeg, V.gimbalMaxDeg);
 fprintf('Sensor delay %.0f ms,  command prefilter %.2f s (outside the loop)\n', ...
     1e3*V.sensorDelay, V.cmdTau);
+fprintf(['Load relief: lr_blend = %.2f, full authority for q >= %.0f kPa ' ...
+    '(ascent peak %.1f kPa).\n' ...
+    'The blend edits the attitude command. It does not add loop gain, so the\n' ...
+    'margins below are the margins with load relief active.\n'], ...
+    D.lrBlend, D.qEngage/1e3, D.qPeak/1e3);
 fprintf(['Stability uses a 6th-order Padé model (isstable cannot see internal\n' ...
     'delays). Margins, Bode and step responses use the exact delay.\n\n']);
 
