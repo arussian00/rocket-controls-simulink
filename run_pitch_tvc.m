@@ -43,9 +43,20 @@ simMis = run_case(D, mdl, "max-q", ...
     thetaStepDeg=0, gustSpeed=0, misalignDeg=0.5, misalignTime=2, tStop=40);
 
 close all
-pitchDashboard = pitch_dashboard(D, simNominal, simBefore, simAfter, simMis, schedule, traj); %#ok<NASGU>
+pitchDashboard = pitch_dashboard(D, simNominal, simBefore, simAfter, simMis, schedule, traj);
 apply_flight_schedule(traj, D.deltaMax);
 print_checks(D, simNominal, simBefore, simAfter, simMis);
+
+% Step 5. New files own the return; this only calls them and adds one tab.
+fprintf('Simulating booster return (grid fins, descent) ...\n');
+try
+    descent = run_booster_descent(D, V, traj);
+    descent_dashboard(pitchDashboard, descent);
+catch ME
+    warning('run_pitch_tvc:Descent', ...
+        ['Descent step did not finish (%s). The pitch-TVC dashboard is ' ...
+         'unchanged.'], ME.message);
+end
 
 
 %% ------------------------------------------------------------------------
