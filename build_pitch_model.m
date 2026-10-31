@@ -134,14 +134,19 @@ add_block('simulink/Continuous/Integrator', blk(sub, 'int_I'), ...
     'Position', [530 80 570 110], 'InitialCondition', '0');
 
 add_sum(sub, 'sum_a', '+++', [640 40 670 100]);
-add_block('simulink/Discontinuities/Saturation', blk(sub, 'sat_a'), ...
-    'Position', [710 50 760 90], ...
-    'UpperLimit', 'aCmdMax', 'LowerLimit', '-aCmdMax');
-add_sum(sub, 'sum_aw', '+-', [800 130 830 170]);
+add_block('simulink/Sources/Clock', blk(sub, 'clock'), ...
+    'Position', [500 300 540 330]);
+add_lookup(sub, 'lookup_aMax', 'schedACmdMax', [580 250 700 290]);
+add_lookup(sub, 'lookup_invMu', 'schedInvMu', [580 310 700 350]);
+add_block('simulink/Math Operations/Gain', blk(sub, 'neg_aMax'), ...
+    'Position', [740 250 790 280], 'Gain', '-1');
+add_block('simulink/Discontinuities/Saturation Dynamic', blk(sub, 'sat_a'), ...
+    'Position', [760 40 820 110]);
+add_block('simulink/Math Operations/Product', blk(sub, 'prod_invMu'), ...
+    'Position', [860 40 900 80], 'Inputs', '**');
+add_sum(sub, 'sum_aw', '+-', [800 150 830 190]);
 add_block('simulink/Math Operations/Gain', blk(sub, 'Kaw'), ...
-    'Position', [620 145 680 175], 'Gain', 'Kaw');
-add_block('simulink/Math Operations/Gain', blk(sub, 'inv_mu'), ...
-    'Position', [800 50 860 90], 'Gain', '1/mu');
+    'Position', [620 160 680 190], 'Gain', 'Kaw');
 
 add_out(sub, 'delta_cmd', 1, [920 58 950 72]);
 
@@ -162,9 +167,15 @@ add_line(sub, 'sum_idot/1', 'int_I/1', 'autorouting', 'on');
 add_line(sub, 'Kp/1', 'sum_a/1', 'autorouting', 'on');
 add_line(sub, 'Kd/1', 'sum_a/2', 'autorouting', 'on');
 add_line(sub, 'int_I/1', 'sum_a/3', 'autorouting', 'on');
-add_line(sub, 'sum_a/1', 'sat_a/1', 'autorouting', 'on');
-add_line(sub, 'sat_a/1', 'inv_mu/1', 'autorouting', 'on');
-add_line(sub, 'inv_mu/1', 'delta_cmd/1', 'autorouting', 'on');
+add_line(sub, 'clock/1', 'lookup_aMax/1', 'autorouting', 'on');
+add_line(sub, 'clock/1', 'lookup_invMu/1', 'autorouting', 'on');
+add_line(sub, 'lookup_aMax/1', 'sat_a/1', 'autorouting', 'on');
+add_line(sub, 'lookup_aMax/1', 'neg_aMax/1', 'autorouting', 'on');
+add_line(sub, 'neg_aMax/1', 'sat_a/3', 'autorouting', 'on');
+add_line(sub, 'sum_a/1', 'sat_a/2', 'autorouting', 'on');
+add_line(sub, 'sat_a/1', 'prod_invMu/1', 'autorouting', 'on');
+add_line(sub, 'lookup_invMu/1', 'prod_invMu/2', 'autorouting', 'on');
+add_line(sub, 'prod_invMu/1', 'delta_cmd/1', 'autorouting', 'on');
 
 add_line(sub, 'sat_a/1', 'sum_aw/1', 'autorouting', 'on');
 add_line(sub, 'sum_a/1', 'sum_aw/2', 'autorouting', 'on');
@@ -231,12 +242,16 @@ add_block('simulink/Sources/Step', blk(sub, 'wind'), ...
 add_sum(sub, 'sum_angle', '++', [140 45 170 95]);
 add_block('simulink/Math Operations/Trigonometric Function', blk(sub, 'sin_angle'), ...
     'Position', [210 55 260 85], 'Operator', 'sin');
-add_block('simulink/Math Operations/Gain', blk(sub, 'mu'), ...
-    'Position', [300 55 360 85], 'Gain', 'mu');
+add_block('simulink/Sources/Clock', blk(sub, 'clock'), ...
+    'Position', [210 300 250 330]);
+add_lookup(sub, 'lookup_mu', 'schedMu', [280 290 400 330]);
+add_lookup(sub, 'lookup_lambda', 'schedLambda', [400 200 520 240]);
+add_block('simulink/Math Operations/Product', blk(sub, 'prod_mu'), ...
+    'Position', [430 50 470 90], 'Inputs', '**');
 add_block('simulink/Math Operations/Gain', blk(sub, 'gust_gain'), ...
     'Position', [140 245 220 275], 'Gain', 'gustAccPerWind');
-add_block('simulink/Math Operations/Gain', blk(sub, 'lambda'), ...
-    'Position', [520 180 580 210], 'Gain', 'lambdaAero');
+add_block('simulink/Math Operations/Product', blk(sub, 'prod_lambda'), ...
+    'Position', [560 160 600 200], 'Inputs', '**');
 
 add_sum(sub, 'sum_qdot', '+++', [420 50 450 120]);
 add_block('simulink/Continuous/Integrator', blk(sub, 'int_q'), ...
@@ -250,15 +265,19 @@ add_out(sub, 'q', 2, [600 140 630 154]);
 add_line(sub, 'delta/1', 'sum_angle/1', 'autorouting', 'on');
 add_line(sub, 'misalign/1', 'sum_angle/2', 'autorouting', 'on');
 add_line(sub, 'sum_angle/1', 'sin_angle/1', 'autorouting', 'on');
-add_line(sub, 'sin_angle/1', 'mu/1', 'autorouting', 'on');
-add_line(sub, 'mu/1', 'sum_qdot/1', 'autorouting', 'on');
-add_line(sub, 'lambda/1', 'sum_qdot/2', 'autorouting', 'on');
+add_line(sub, 'clock/1', 'lookup_mu/1', 'autorouting', 'on');
+add_line(sub, 'clock/1', 'lookup_lambda/1', 'autorouting', 'on');
+add_line(sub, 'sin_angle/1', 'prod_mu/1', 'autorouting', 'on');
+add_line(sub, 'lookup_mu/1', 'prod_mu/2', 'autorouting', 'on');
+add_line(sub, 'prod_mu/1', 'sum_qdot/1', 'autorouting', 'on');
+add_line(sub, 'lookup_lambda/1', 'prod_lambda/1', 'autorouting', 'on');
+add_line(sub, 'int_theta/1', 'prod_lambda/2', 'autorouting', 'on');
+add_line(sub, 'prod_lambda/1', 'sum_qdot/2', 'autorouting', 'on');
 add_line(sub, 'wind/1', 'gust_gain/1', 'autorouting', 'on');
 add_line(sub, 'gust_gain/1', 'sum_qdot/3', 'autorouting', 'on');
 add_line(sub, 'sum_qdot/1', 'int_q/1', 'autorouting', 'on');
 add_line(sub, 'int_q/1', 'int_theta/1', 'autorouting', 'on');
 add_line(sub, 'int_theta/1', 'theta/1', 'autorouting', 'on');
-add_line(sub, 'int_theta/1', 'lambda/1', 'autorouting', 'on');
 add_line(sub, 'int_q/1', 'q/1', 'autorouting', 'on');
 end
 
@@ -332,6 +351,18 @@ end
 function add_sum(parent, name, signs, pos)
 add_block('simulink/Math Operations/Sum', blk(parent, name), ...
     'Position', pos, 'Inputs', signs, 'IconShape', 'rectangular');
+end
+
+
+function add_lookup(parent, name, tableName, pos)
+% 1-D lookup versus schedTime. ExtrapMethod Clip holds the end value.
+add_block('simulink/Lookup Tables/1-D Lookup Table', blk(parent, name), ...
+    'Position', pos, ...
+    'NumberOfTableDimensions', '1', ...
+    'BreakpointsForDimension1', 'schedTime', ...
+    'Table', tableName, ...
+    'InterpMethod', 'Linear point-slope', ...
+    'ExtrapMethod', 'Clip');
 end
 
 

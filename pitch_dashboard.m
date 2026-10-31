@@ -1,4 +1,4 @@
-function fig = pitch_dashboard(D, simNominal, simLarge, simMis)
+function fig = pitch_dashboard(D, simNominal, simLarge, simMis, schedule, traj)
 %PITCH_DASHBOARD  One window for the pitch-TVC runs.
 %
 %   fig = pitch_dashboard(D, simNominal, simLarge, simMis)
@@ -22,10 +22,12 @@ tabs = uitabgroup(fig);
 tabResp = uitab(tabs, 'Title', 'Responses');
 tabBode = uitab(tabs, 'Title', 'Bode');
 tabMore = uitab(tabs, 'Title', 'Limits and disturbances');
+tabFlight = uitab(tabs, 'Title', 'Along the flight');
 
 build_responses(tabResp, D, simNominal, colors);
 build_bode(tabBode, D, colors);
 build_more(tabMore, D, simLarge, simMis, colors);
+build_flight(tabFlight, D, schedule, traj);
 
 fig.Visible = 'on';
 drawnow
@@ -245,6 +247,64 @@ ylabel(axDr, 'Pitch [deg]');
 title(axDr, sprintf('Max-q open-loop drift from 1 deg (rigid body, pole %.3f rad/s)', ...
     flightMq.unstablePole));
 legend(axDr, {'open loop', 'closed loop'}, 'Location', 'northeast');
+end
+
+
+function build_flight(parent, D, S, traj)
+g = uigridlayout(parent, [2 1]);
+g.RowHeight = {'1x', '1x'};
+g.ColumnWidth = {'1x'};
+g.Padding = [12 10 12 10];
+g.RowSpacing = 8;
+axPm = new_axes(g, 1, 1);
+axGm = new_axes(g, 2, 1);
+[tMark, pmMark, gmMark] = snapshot_marks(D, traj);
+
+hPm(1) = plot(axPm, S.t, S.pm, 'LineWidth', 1.5);
+hold(axPm, 'on');
+hPm(2) = plot(axPm, S.t, S.pmFixed, 'LineWidth', 1.3);
+hPm(3) = plot(axPm, [S.t(1) S.t(end)], [S.floorPm S.floorPm], 'r--');
+hPm(4) = plot(axPm, tMark, pmMark, 'ko', 'MarkerFaceColor', 'k', 'MarkerSize', 7);
+if any(S.belowFixed)
+    plot(axPm, S.t(S.belowFixed), S.pmFixed(S.belowFixed), 'rx', ...
+        'MarkerSize', 8, 'LineWidth', 1.2, 'HandleVisibility', 'off');
+end
+style_ax(axPm);
+xlabel(axPm, 'Time from liftoff [s]');
+ylabel(axPm, 'Phase margin [deg]');
+title(axPm, 'Phase margin along the flight. Black dots: liftoff, max-q, landing.');
+legend(axPm, hPm, {'scheduled 1/mu', 'fixed liftoff gain', '30 deg floor', ...
+    'three design points'}, 'Location', 'southwest');
+
+hGm(1) = plot(axGm, S.t, S.gm, 'LineWidth', 1.5);
+hold(axGm, 'on');
+hGm(2) = plot(axGm, S.t, S.gmFixed, 'LineWidth', 1.3);
+hGm(3) = plot(axGm, [S.t(1) S.t(end)], [S.floorGm S.floorGm], 'r--');
+hGm(4) = plot(axGm, tMark, gmMark, 'ko', 'MarkerFaceColor', 'k', 'MarkerSize', 7);
+if any(S.belowFixed)
+    plot(axGm, S.t(S.belowFixed), S.gmFixed(S.belowFixed), 'rx', ...
+        'MarkerSize', 8, 'LineWidth', 1.2, 'HandleVisibility', 'off');
+end
+style_ax(axGm);
+xlabel(axGm, 'Time from liftoff [s]');
+ylabel(axGm, 'Upward gain margin [dB]');
+title(axGm, sprintf(['Gain margin. Scheduled floor violations: %d. ' ...
+    'Fixed-gain floor violations: %d (marked x).'], S.nBelow, S.nBelowFixed));
+legend(axGm, hGm, {'scheduled 1/mu', 'fixed liftoff gain', '6 dB floor', ...
+    'three design points'}, 'Location', 'southwest');
+end
+
+
+function [tMark, pmMark, gmMark] = snapshot_marks(D, traj)
+qAsc = traj.q_Pa;
+qAsc(traj.phase ~= "ascent") = -inf;
+[~, iQ] = max(qAsc);
+land = find(traj.phase == "landing");
+[~, iRel] = min(abs(traj.altitude_m(land) - 1000));
+iL = land(iRel);
+tMark = [traj.t_s(1), traj.t_s(iQ), traj.t_s(iL)];
+pmMark = [D.flight(1).margins.pm, D.flight(2).margins.pm, D.flight(3).margins.pm];
+gmMark = [D.flight(1).margins.gmUp, D.flight(2).margins.gmUp, D.flight(3).margins.gmUp];
 end
 
 

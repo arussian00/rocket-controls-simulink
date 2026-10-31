@@ -16,6 +16,8 @@ clear; close all; clc
 
 V = vehicle_params();
 D = design_pitch_controller(V, plot=false);
+traj = booster_trajectory();
+schedule = flight_margin_schedule(D, V, traj);
 mdl = build_pitch_model();
 
 nominal = ["liftoff", "max-q", "landing"];
@@ -34,7 +36,8 @@ simMis = run_case(D, mdl, "max-q", ...
     thetaStepDeg=0, gustSpeed=0, misalignDeg=0.5, misalignTime=2, tStop=40);
 
 close all
-pitchDashboard = pitch_dashboard(D, simNominal, simLarge, simMis); %#ok<NASGU>
+pitchDashboard = pitch_dashboard(D, simNominal, simLarge, simMis, schedule, traj); %#ok<NASGU>
+apply_flight_schedule(traj, D.deltaMax);
 print_checks(D, simNominal, simLarge, simMis);
 
 

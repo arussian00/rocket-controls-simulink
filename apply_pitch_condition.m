@@ -47,6 +47,12 @@ assign('deltaMax', D.deltaMax);
 assign('mu', flight.mu);
 assign('lambdaAero', flight.lambda);
 assign('aCmdMax', flight.mu * D.deltaMax);
+% Frozen-condition lookups: the Simulink plant reads these, not the scalars.
+assign('schedTime', [0 1e6]);
+assign('schedMu', flight.mu * [1 1]);
+assign('schedLambda', flight.lambda * [1 1]);
+assign('schedInvMu', (1 / flight.mu) * [1 1]);
+assign('schedACmdMax', (flight.mu * D.deltaMax) * [1 1]);
 
 assign('gustTime', opts.gustTime);
 assign('gustSpeed', opts.gustSpeed);
