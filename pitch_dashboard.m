@@ -3,52 +3,73 @@ function fig = pitch_dashboard(D, simNominal, simBefore, simAfter, simMis, sched
 %
 %   fig = pitch_dashboard(D, simNominal, simBefore, simAfter, simMis, schedule, traj)
 %
-%   A uifigure with four tabs. MATLAB Online shows it in the browser
-%   figure panel. Bode curves are drawn from freqresp so Control System
-%   Toolbox does not open its own figure. The exact-delay models are used
-%   first; freqresp falls back to rational_delay if a release refuses them.
-%   Step overlays go through step_delay, same as the checklist.
-%   simBefore / simAfter are the 30 deg liftoff step with the command
-%   governor off, then on.
+%   A uifigure whose tab group fills the window. MATLAB Online shows it
+%   in the browser figure panel. Bode curves are drawn from freqresp so
+%   Control System Toolbox does not open its own figure. The exact-delay
+%   models are used first; freqresp falls back to rational_delay if a
+%   release refuses them. Step overlays go through step_delay, same as
+%   the checklist. simBefore / simAfter are the 30 deg liftoff step with
+%   the command governor off, then on.
 
 colors = [0.000 0.447 0.741
           0.850 0.325 0.098
           0.467 0.674 0.188];
 
-fig = uifigure('Name', 'Pitch TVC', ...
-    'Position', [40 40 1180 760], ...
-    'Visible', 'off', ...
-    'AutoResizeChildren', 'on');
-tabs = uitabgroup(fig);
+fig = uifigure('Name', 'Pitch TVC', 'Visible', 'off', 'AutoResizeChildren', 'on');
+place_figure(fig);
+% A direct uitabgroup on the figure keeps a small pixel position and does
+% not grow when the window is resized. The 1x1 grid is the layout manager.
+root = uigridlayout(fig, [1 1]);
+root.Padding = [0 0 0 0];
+root.RowSpacing = 0;
+root.ColumnSpacing = 0;
+root.RowHeight = {'1x'};
+root.ColumnWidth = {'1x'};
+tabs = uitabgroup(root);
+try
+    tabs.Layout.Row = 1;
+    tabs.Layout.Column = 1;
+catch
+    % This release will not lay the tab group out in the grid. Pin it to
+    % the figure in normalized units so a resize still stretches it.
+    tabs.Parent = fig;
+    try
+        fig.AutoResizeChildren = 'off';
+    catch
+    end
+    tabs.Units = 'normalized';
+    tabs.Position = [0 0 1 1];
+end
 
 tabResp = uitab(tabs, 'Title', 'Responses');
+tabStats = uitab(tabs, 'Title', 'Stats');
 tabBode = uitab(tabs, 'Title', 'Bode');
-tabMore = uitab(tabs, 'Title', 'Limits and disturbances');
+tabLarge = uitab(tabs, 'Title', '30 deg step');
+tabDist = uitab(tabs, 'Title', 'Disturbances');
 tabFlight = uitab(tabs, 'Title', 'Along the flight');
 
-build_responses(tabResp, D, simNominal, colors, {simBefore, simAfter});
+build_responses(tabResp, D, simNominal, colors);
+build_stats(tabStats, D, simNominal, {simBefore, simAfter});
 build_bode(tabBode, D, colors);
-build_more(tabMore, D, simBefore, simAfter, simMis, colors);
+build_large(tabLarge, D, simBefore, simAfter, colors);
+build_disturbances(tabDist, D, simMis, colors);
 build_flight(tabFlight, D, schedule, traj);
 
 fig.Visible = 'on';
+try
+    fig.WindowState = 'maximized';
+catch
+end
 drawnow
 end
 
 
-function build_responses(parent, D, runs, colors, extras)
-g = uigridlayout(parent, [3 2]);
-g.RowHeight = {'1x', '1x', 280};
-g.ColumnWidth = {'1x', '1x'};
-g.Padding = [12 10 12 10];
-g.RowSpacing = 8;
-g.ColumnSpacing = 10;
-g.Scrollable = 'on';
-
-axPitch = new_axes(g, 1, 1);
-axGust = new_axes(g, 1, 2);
-axGim = new_axes(g, 2, 1);
-axRate = new_axes(g, 2, 2);
+function build_responses(parent, D, runs, colors)
+tl = make_tiles(parent, 2, 2);
+axPitch = next_ax(tl);
+axGust = next_ax(tl);
+axGim = next_ax(tl);
+axRate = next_ax(tl);
 
 hSim = gobjects(numel(runs), 1);
 for k = 1:numel(runs)
@@ -81,61 +102,58 @@ style_ax(axPitch);
 style_ax(axGust);
 style_ax(axGim);
 style_ax(axRate);
+names = cellstr(string({runs{1}.name, runs{2}.name, runs{3}.name}));
 xlabel(axPitch, 'Time [s]');
 ylabel(axPitch, 'Pitch [deg]');
-title(axPitch, sprintf('%.0f deg step: solid Simulink, dashed linear, black command', ...
-    D.thetaStepDeg));
-legend(axPitch, hSim, cellstr(string({runs{1}.name, runs{2}.name, runs{3}.name})), ...
-    'Location', 'southeast');
+title(axPitch, sprintf('%g deg step', D.thetaStepDeg));
+small_legend(axPitch, hSim, names);
 
 xlabel(axGust, 'Time after gust [s]');
 ylabel(axGust, 'Pitch [deg]');
-title(axGust, sprintf('Linear response to a %.0f m/s gust (own scale)', D.gustSpeed));
-legend(axGust, cellstr(string({runs{1}.name, runs{2}.name, runs{3}.name})), ...
-    'Location', 'northeast');
+title(axGust, sprintf('%g m/s gust, linear', D.gustSpeed));
+small_legend(axGust, names);
 
 xlabel(axGim, 'Time [s]');
 ylabel(axGim, 'Gimbal [deg]');
-title(axGim, sprintf('Gimbal angle, stops at \\pm%.0f deg', D.deltaMaxDeg));
-legend(axGim, cellstr(string({runs{1}.name, runs{2}.name, runs{3}.name})), ...
-    'Location', 'northeast');
+title(axGim, sprintf('Gimbal, stops at +/-%g deg', D.deltaMaxDeg));
+small_legend(axGim, names);
 
 xlabel(axRate, 'Time [s]');
 ylabel(axRate, 'Gimbal rate [deg/s]');
-title(axRate, sprintf('Gimbal rate, stops at \\pm%.0f deg/s', D.gimbalRateDeg));
-legend(axRate, cellstr(string({runs{1}.name, runs{2}.name, runs{3}.name})), ...
-    'Location', 'northeast');
+title(axRate, sprintf('Gimbal rate, +/-%g deg/s', D.gimbalRateDeg));
+small_legend(axRate, names);
+end
 
-foot = uigridlayout(g, [2 1]);
-foot.Layout.Row = 3;
-foot.Layout.Column = [1 2];
-foot.RowHeight = {44, '1x'};
-foot.Padding = [0 0 0 0];
-foot.RowSpacing = 4;
-note = ['Solid pitch is the 5 deg Simulink run. Dashed pitch is the linear model ' ...
-    'with the exact delay. Rise, overshoot and settling are that linear command. ' ...
-    'Peak gimbal, rate, time on the stops and the integrator are from Simulink. ' ...
-    'The 30 deg rows reuse the liftoff linear margins; their rise and settling ' ...
-    'cells are blank. Stable is the order-6 Padé test. GM up is the classical ' ...
-    'margin; GM down is how far gain can fall.'];
-uilabel(foot, 'Text', note, 'WordWrap', 'on', 'VerticalAlignment', 'top');
-uitable(foot, 'Data', cells_for_uitable(stats_table(D, runs, extras)), ...
+
+function build_stats(parent, D, runs, extras)
+g = uigridlayout(parent, [2 1]);
+g.RowHeight = {100, '1x'};
+g.ColumnWidth = {'1x'};
+g.Padding = [12 10 12 10];
+g.RowSpacing = 6;
+g.Scrollable = 'off';
+note = ['5 deg rows: solid is Simulink, dashed is the linear command. ' ...
+    'Rise and settling are that linear response. Peaks, time on the stops ' ...
+    'and the integrator are Simulink. The 30 deg rows reuse the liftoff ' ...
+    'margins, so rise and settling are blank. Stable is the order-6 Padé test.'];
+lbl = uilabel(g, 'Text', note, 'WordWrap', 'on', 'VerticalAlignment', 'top');
+lbl.Layout.Row = 1;
+lbl.Layout.Column = 1;
+uit = uitable(g, 'Data', cells_for_uitable(stats_table(D, runs, extras)), ...
     'ColumnName', {'Condition', 'Stable', 'PM [deg]', 'GM up [dB]', 'GM down [dB]', ...
     'wc [rad/s]', 'Rise [s]', 'Overshoot [%]', 'Ts 5% [s]', 'Ts 2% [s]', ...
     'Peak gimbal [deg]', 'Peak rate [deg/s]', 'On angle [s]', 'On rate [s]', ...
     'Integrator [deg/s]'}, ...
     'ColumnSortable', true, 'RowName', {}, 'FontSize', 11);
+uit.Layout.Row = 2;
+uit.Layout.Column = 1;
 end
 
 
 function build_bode(parent, D, colors)
-g = uigridlayout(parent, [2 1]);
-g.RowHeight = {'1x', '1x'};
-g.ColumnWidth = {'1x'};
-g.Padding = [12 10 12 10];
-g.RowSpacing = 8;
-axMag = new_axes(g, 1, 1);
-axPh = new_axes(g, 2, 1);
+tl = make_tiles(parent, 2, 1);
+axMag = next_ax(tl);
+axPh = next_ax(tl);
 names = cell(1, numel(D.flight));
 for k = 1:numel(D.flight)
     f = D.flight(k);
@@ -167,40 +185,35 @@ for k = 1:numel(D.flight)
         end
     end
 end
-yline(axMag, 0, 'k:');
-yline(axPh, -180, 'k:');
+ym = yline(axMag, 0, 'k:');
+yp = yline(axPh, -180, 'k:');
+try
+    ym.HandleVisibility = 'off';
+    yp.HandleVisibility = 'off';
+catch
+end
 style_ax(axMag);
 style_ax(axPh);
 axMag.XScale = 'log';
 axPh.XScale = 'log';
 axMag.XLim = [0.05 200];
 axPh.XLim = [0.05 200];
-xlabel(axPh, 'Frequency [rad/s]');
 ylabel(axMag, 'Magnitude [dB]');
 ylabel(axPh, 'Phase [deg]');
-title(axMag, 'Loop gain. Circles: gain crossover. Squares: upward gain margin.');
-title(axPh, 'Phase. The -180 deg line is the phase-crossover reference.');
-legend(axMag, names, 'Location', 'southwest');
-legend(axPh, cellstr(string({D.flight.name})), 'Location', 'southwest');
+title(axMag, 'Loop gain');
+title(axPh, 'Phase');
+small_legend(axMag, names);
+small_legend(axPh, cellstr(string({D.flight.name})));
+safe_layout_xlabel(tl, 'Frequency [rad/s]', axPh);
 end
 
 
-function build_more(parent, D, simBefore, simAfter, simMis, colors)
-g = uigridlayout(parent, [4 2]);
-g.RowHeight = {'1x', '1x', '1x', '1x'};
-g.ColumnWidth = {'1x', '1x'};
-g.Padding = [12 10 12 10];
-g.RowSpacing = 8;
-g.ColumnSpacing = 10;
-g.Scrollable = 'on';
-
-axPitch = new_axes(g, 1, 1);
-axInt = new_axes(g, 1, 2);
-axGim = new_axes(g, 2, 1);
-axRate = new_axes(g, 2, 2);
-axMp = new_axes(g, 3, 1);
-axMg = new_axes(g, 3, 2);
-axDr = new_axes(g, 4, [1 2]);
+function build_large(parent, D, simBefore, simAfter, colors)
+tl = make_tiles(parent, 2, 2);
+axPitch = next_ax(tl);
+axInt = next_ax(tl);
+axGim = next_ax(tl);
+axRate = next_ax(tl);
 
 cBefore = colors(2, :);
 cAfter = colors(1, :);
@@ -209,46 +222,46 @@ hold(axPitch, 'on');
 plot(axPitch, simBefore.t, simBefore.thetaDeg, 'Color', cBefore, 'LineWidth', 1.2);
 plot(axPitch, simAfter.t, simAfter.thetaDeg, 'Color', cAfter, 'LineWidth', 1.3);
 style_ax(axPitch);
-xlabel(axPitch, 'Time [s]');
 ylabel(axPitch, 'Pitch [deg]');
-title(axPitch, sprintf('Liftoff %.0f deg. Before ends at %.1f deg, after at %.1f deg.', ...
-    simBefore.thetaStepDeg, simBefore.thetaDeg(end), simAfter.thetaDeg(end)));
-legend(axPitch, {'command', 'before', 'after'}, 'Location', 'southeast');
+title(axPitch, sprintf('Pitch, ends %.1f / %.1f deg', ...
+    simBefore.thetaDeg(end), simAfter.thetaDeg(end)));
+small_legend(axPitch, {'command', 'before', 'after'});
 
 plot_integ(axInt, simBefore, cBefore, simAfter, cAfter);
 style_ax(axInt);
-xlabel(axInt, 'Time [s]');
 ylabel(axInt, 'Integrator [deg/s]');
-title(axInt, sprintf('Attitude integrator. Before ends at %.3f deg/s, after at %.3f deg/s.', ...
+title(axInt, sprintf('Integrator, %.2f / %.2f deg/s', ...
     rad2deg(simBefore.integEnd), rad2deg(simAfter.integEnd)));
-legend(axInt, {'before', 'after'}, 'Location', 'northeast');
+small_legend(axInt, {'before', 'after'});
 
 plot(axGim, simBefore.t, simBefore.deltaDeg, 'Color', cBefore, 'LineWidth', 1.2);
 hold(axGim, 'on');
 plot(axGim, simAfter.t, simAfter.deltaDeg, 'Color', cAfter, 'LineWidth', 1.3);
 limit_lines(axGim, simBefore.t, D.deltaMaxDeg);
 style_ax(axGim);
-xlabel(axGim, 'Time [s]');
 ylabel(axGim, 'Gimbal [deg]');
-title(axGim, sprintf(['Gimbal angle, stops at \\pm%.0f deg. Before peak %.1f deg ' ...
-    '(%.2f s on the stop). After peak %.1f deg (%.2f s).'], ...
-    D.deltaMaxDeg, max(abs(simBefore.deltaDeg)), simBefore.tOnAngle, ...
-    max(abs(simAfter.deltaDeg)), simAfter.tOnAngle));
-legend(axGim, {'before', 'after'}, 'Location', 'northeast');
+title(axGim, sprintf('Gimbal, peak %.1f / %.1f deg', ...
+    max(abs(simBefore.deltaDeg)), max(abs(simAfter.deltaDeg))));
+small_legend(axGim, {'before', 'after'});
 
 plot(axRate, simBefore.t, simBefore.rateDeg, 'Color', cBefore, 'LineWidth', 1.2);
 hold(axRate, 'on');
 plot(axRate, simAfter.t, simAfter.rateDeg, 'Color', cAfter, 'LineWidth', 1.3);
 limit_lines(axRate, simBefore.t, D.gimbalRateDeg);
 style_ax(axRate);
-xlabel(axRate, 'Time [s]');
 ylabel(axRate, 'Gimbal rate [deg/s]');
-title(axRate, sprintf(['Gimbal rate, stops at \\pm%.0f deg/s. Before peak %.1f ' ...
-    '(%.2f s on the stop). After peak %.1f (%.2f s).'], ...
-    D.gimbalRateDeg, max(abs(simBefore.rateDeg)), simBefore.tOnRate, ...
-    max(abs(simAfter.rateDeg)), simAfter.tOnRate));
-legend(axRate, {'before', 'after'}, 'Location', 'northeast');
+title(axRate, sprintf('Rate, peak %.0f / %.0f deg/s', ...
+    max(abs(simBefore.rateDeg)), max(abs(simAfter.rateDeg))));
+small_legend(axRate, {'before', 'after'});
+safe_layout_xlabel(tl, 'Time [s]', [axGim axRate]);
+end
 
+
+function build_disturbances(parent, D, simMis, colors)
+tl = make_tiles(parent, 2, 2);
+axMp = next_ax(tl);
+axMg = next_ax(tl);
+axDr = next_ax(tl, [1 2]);
 flight = match_flight(D, simMis.name);
 tLin = (0:0.02:(simMis.tStop - simMis.misalignTime))';
 y = step_delay(flight.Tdist * flight.mu * deg2rad(simMis.misalignDeg), tLin);
@@ -257,41 +270,33 @@ plot(axMp, simMis.t, simMis.thetaDeg, 'Color', c, 'LineWidth', 1.3);
 hold(axMp, 'on');
 plot(axMp, tLin + simMis.misalignTime, rad2deg(y), '--', 'Color', c, 'LineWidth', 1.1);
 style_ax(axMp);
-xlabel(axMp, 'Time [s]');
 ylabel(axMp, 'Pitch [deg]');
-title(axMp, sprintf('%s, %.1f deg thrust misalignment: solid Simulink, dashed linear', ...
-    as_char(simMis.name), simMis.misalignDeg));
-legend(axMp, {'Simulink', 'linear'}, 'Location', 'northeast');
+title(axMp, sprintf('Misalignment %.1f deg', simMis.misalignDeg));
+small_legend(axMp, {'Simulink', 'linear'});
 
 plot(axMg, simMis.t, simMis.deltaDeg, 'Color', c, 'LineWidth', 1.3);
 hold(axMg, 'on');
 plot(axMg, [simMis.t(1) simMis.t(end)], ...
     [-simMis.misalignDeg -simMis.misalignDeg], 'k:');
 style_ax(axMg);
-xlabel(axMg, 'Time [s]');
 ylabel(axMg, 'Gimbal [deg]');
-title(axMg, 'Gimbal trim. Dotted line is -misalignment.');
-legend(axMg, {'nozzle', 'trim'}, 'Location', 'northeast');
+title(axMg, 'Gimbal trim');
+small_legend(axMg, {'nozzle', 'trim'});
 
 flightMq = match_flight(D, "max-q");
 plot_drift(axDr, flightMq, D);
 style_ax(axDr);
-xlabel(axDr, 'Time [s]');
 ylabel(axDr, 'Pitch [deg]');
-title(axDr, sprintf('Max-q open-loop drift from 1 deg (rigid body, pole %.3f rad/s)', ...
-    flightMq.unstablePole));
-legend(axDr, {'open loop', 'closed loop'}, 'Location', 'northeast');
+title(axDr, sprintf('Open-loop drift, pole %.3f /s', flightMq.unstablePole));
+small_legend(axDr, {'open loop', 'closed loop'});
+safe_layout_xlabel(tl, 'Time [s]', axDr);
 end
 
 
 function build_flight(parent, D, S, traj)
-g = uigridlayout(parent, [2 1]);
-g.RowHeight = {'1x', '1x'};
-g.ColumnWidth = {'1x'};
-g.Padding = [12 10 12 10];
-g.RowSpacing = 8;
-axPm = new_axes(g, 1, 1);
-axGm = new_axes(g, 2, 1);
+tl = make_tiles(parent, 2, 1);
+axPm = next_ax(tl);
+axGm = next_ax(tl);
 [tMark, pmMark, gmMark] = snapshot_marks(D, traj);
 
 hPm(1) = plot(axPm, S.t, S.pm, 'LineWidth', 1.5);
@@ -304,11 +309,10 @@ if any(S.belowFixed)
         'MarkerSize', 8, 'LineWidth', 1.2, 'HandleVisibility', 'off');
 end
 style_ax(axPm);
-xlabel(axPm, 'Time from liftoff [s]');
 ylabel(axPm, 'Phase margin [deg]');
-title(axPm, 'Phase margin along the flight. Black dots: liftoff, max-q, landing.');
-legend(axPm, hPm, {'scheduled 1/mu', 'fixed liftoff gain', '30 deg floor', ...
-    'three design points'}, 'Location', 'southwest');
+title(axPm, 'Phase margin');
+small_legend(axPm, hPm, {'scheduled 1/mu', 'fixed liftoff gain', '30 deg floor', ...
+    'design points'});
 
 hGm(1) = plot(axGm, S.t, S.gm, 'LineWidth', 1.5);
 hold(axGm, 'on');
@@ -320,12 +324,11 @@ if any(S.belowFixed)
         'MarkerSize', 8, 'LineWidth', 1.2, 'HandleVisibility', 'off');
 end
 style_ax(axGm);
-xlabel(axGm, 'Time from liftoff [s]');
 ylabel(axGm, 'Upward gain margin [dB]');
-title(axGm, sprintf(['Gain margin. Scheduled floor violations: %d. ' ...
-    'Fixed-gain floor violations: %d (marked x).'], S.nBelow, S.nBelowFixed));
-legend(axGm, hGm, {'scheduled 1/mu', 'fixed liftoff gain', '6 dB floor', ...
-    'three design points'}, 'Location', 'southwest');
+title(axGm, sprintf('Gain margin, %d / %d under the floor', S.nBelow, S.nBelowFixed));
+small_legend(axGm, hGm, {'scheduled 1/mu', 'fixed liftoff gain', '6 dB floor', ...
+    'design points'});
+safe_layout_xlabel(tl, 'Time from liftoff [s]', axGm);
 end
 
 
@@ -558,10 +561,70 @@ plot(ax, tOL, rad2deg(yOL), tCL, rad2deg(yCL), 'LineWidth', 1.2);
 end
 
 
-function ax = new_axes(parent, row, col)
-ax = uiaxes(parent);
-ax.Layout.Row = row;
-ax.Layout.Column = col;
+function place_figure(fig)
+% 90% of the screen, then maximized when this release allows it.
+pos = [40 40 1180 760];
+try
+    scr = get(groot, 'ScreenSize');
+    if numel(scr) >= 4 && scr(3) > 400 && scr(4) > 300
+        w = min(scr(3), max(960, 0.9 * scr(3)));
+        h = min(scr(4), max(640, 0.9 * scr(4)));
+        left = scr(1) + max(0, (scr(3) - w) / 2);
+        bottom = scr(2) + max(0, (scr(4) - h) / 2);
+        pos = [left, bottom, w, h];
+    end
+catch
+end
+try
+    fig.Position = pos;
+catch
+end
+end
+
+
+function tl = make_tiles(parent, nRows, nCols)
+tl = tiledlayout(parent, nRows, nCols, 'Padding', 'compact', 'TileSpacing', 'compact');
+try
+    tl.Units = 'normalized';
+    tl.OuterPosition = [0 0 1 1];
+catch
+end
+end
+
+
+function ax = next_ax(tl, span)
+if nargin < 2
+    ax = nexttile(tl);
+else
+    ax = nexttile(tl, span);
+end
+style_ax(ax);
+end
+
+
+function small_legend(ax, varargin)
+try
+    lg = legend(ax, varargin{:});
+    lg.Location = 'best';
+    lg.FontSize = 8;
+    lg.Box = 'off';
+catch
+end
+end
+
+
+function safe_layout_xlabel(tl, label, bottomAxes)
+% One xlabel for the tiledlayout. If this release has no layout xlabel,
+% label the bottom axes instead.
+try
+    xlabel(tl, label);
+catch
+    if nargin >= 3
+        for k = 1:numel(bottomAxes)
+            xlabel(bottomAxes(k), label);
+        end
+    end
+end
 end
 
 
@@ -569,6 +632,10 @@ function style_ax(ax)
 ax.Box = 'on';
 ax.FontSize = 11;
 grid(ax, 'on');
+try
+    ax.Toolbar.Visible = 'off';
+catch
+end
 end
 
 
