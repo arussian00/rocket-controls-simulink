@@ -330,3 +330,41 @@ Roughly in the order they build on this loop:
 | `isstable` / internal delays | Fixed on this branch. Stability is a Padé test. Re-run `run_pitch_tvc`. A warning that names Padé means that one call could not use the exact delay. |
 | Tuner step looks worse than `run_pitch_tvc` | The tuner is 1-DOF, with derivative on the error and no prefilter. See section 7. |
 | Build stops on `MinMax`, `Switch` or `Saturation Dynamic` | Those blocks are the governor. A rejected `Criteria`, `Function` or port connection is a real diagram error, not a colour. Cosmetic `set_param` failures only warn. |
+
+## 13. Descent and grid fins
+
+`run_pitch_tvc` now continues past staging through the booster return and adds one **Descent** tab to the same Pitch TVC window. The ascent checklist is unchanged. To run only this part:
+
+```matlab
+run_booster_descent
+```
+
+What it covers, using the committed trajectory (the RK4 twin of `simulateBooster` with the superheavy preset):
+
+| Phase | Engines | Pitch effector |
+|---|---|---|
+| Flip | off | RCS, the companion `tauRCS` (30e6 N·m). Fins have no air up here |
+| Boostback | 13 | TVC only |
+| Coast | off | Grid fins, but dynamic pressure is negligible above about 40 km |
+| Entry | off | Grid fins. This is the unpowered descent below `finAlt` (40 km). There is no entry burn (`engEntry = 0`) |
+| Brake | 13 | TVC and grid fins blended by the acceleration each one can produce |
+| Landing | 3 centre | Same blend, fading to TVC as `q` falls. Catch is at 65 m |
+
+The cascade, the command governor and the back-calculation anti-windup are the ascent law. A mode weight splits the acceleration command. The weight and the `mu` in the divider use the same 0.5 s filter, and each surface command is then rate-limited, so the command and the integrator do not step when the engines light, cut off, or drop from 13 to 3.
+
+Grid-fin numbers are design assumptions on top of the companion's `finCLA = 25 m^2`. Half of that force is the pitch pair, the stop is ±20 deg, the rate stop is ±30 deg/s, and the servo is 2 Hz. The alpha stiffness is a quarter of the control derivative (restoring, because engines-first the fins are the tail). The pitch command stands up from 400 m above the arms and is upright by 150 m: the companion's 20 m tilt fade is faster than this 1 rad/s loop. The 30 deg cap is the companion's `maxTiltDeg`.
+
+A NumPy twin of the fixed-step loop (the Descent tab) gave, approximately: catch error **+1.3 deg**, peak fin **20 deg** with about **8.3 s** on the stop, peak gimbal under **2 deg** and never on the stop. Phase anchors from that twin, same plant and the 20 ms delay:
+
+| Phase | PM | GM up |
+|---|---|---|
+| Flip (RCS) | 62.5 deg | 20.6 dB |
+| Boostback (TVC) | 64.0 deg | 19.4 dB |
+| Entry at peak q | 54.1 deg | 12.9 dB |
+| Brake, blended | 60.9 deg | 18.9 dB |
+| Landing just after 13 to 3 | 62.7 deg | 19.5 dB |
+| Catch | 64.0 deg | 19.4 dB |
+
+`run_booster_descent` reprints these with `loop_margins` (Padé stability on the anchors). Coast above the fins is not claimed: there is no pitch authority. Handoffs in the NumPy twin moved the commands by well under 0.1 deg in any 20 ms sample inside ±1 s of the switch, and the integrator step stayed near 1e-5 rad/s.
+
+New files: `grid_fin_model.m`, `grid_fin_effectiveness.m`, `make_booster_return_trajectory.m`, `descent_targets.m`, `descent_openloop.m`, `descent_controller.m`, `build_descent_model.m`, `descent_model_init.m`, `apply_descent_workspace.m`, `run_booster_descent.m`, `descent_dashboard.m`. `run_pitch_tvc.m` only calls them. The Simulink model is `boosterDescentPitch.slx` (gitignored). If the diagram fails, the warning says so and the Descent tab still shows the fixed-step loop.
