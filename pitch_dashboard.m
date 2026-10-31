@@ -1,4 +1,4 @@
-function fig = pitch_dashboard(D, simNominal, simBefore, simAfter, simMis, schedule, traj)
+function fig = pitch_dashboard(D, simNominal, simBefore, simAfter, simMis, schedule, traj, varargin)
 %PITCH_DASHBOARD  One window for the pitch-TVC runs.
 %
 %   fig = pitch_dashboard(D, simNominal, simBefore, simAfter, simMis, schedule, traj)
@@ -9,7 +9,22 @@ function fig = pitch_dashboard(D, simNominal, simBefore, simAfter, simMis, sched
 %   models are used first; freqresp falls back to rational_delay if a
 %   release refuses them. Step overlays go through step_delay, same as
 %   the checklist. simBefore / simAfter are the 30 deg liftoff step with
-%   the command governor off, then on.
+%   the command governor off, then on. Optional arguments after traj are a
+%   Monte Carlo struct from run_monte_carlo and a tune struct from
+%   tune_with_systune. They add the Monte Carlo tab and two Stats rows.
+
+mc = [];
+tune = [];
+if ~isempty(varargin)
+    mc = varargin{1};
+end
+if numel(varargin) >= 2
+    tune = varargin{2};
+end
+if ~isempty(tune) && ~(isstruct(mc) && isfield(mc, 'passRate'))
+    warning('pitch_dashboard:Tune', ...
+        'The tune struct is drawn on the Monte Carlo tab. Pass the MC struct as well.');
+end
 
 colors = [0.000 0.447 0.741
           0.850 0.325 0.098
@@ -49,11 +64,15 @@ tabDist = uitab(tabs, 'Title', 'Disturbances');
 tabFlight = uitab(tabs, 'Title', 'Along the flight');
 
 build_responses(tabResp, D, simNominal, colors);
-build_stats(tabStats, D, simNominal, {simBefore, simAfter});
+build_stats(tabStats, D, simNominal, {simBefore, simAfter}, mc);
 build_bode(tabBode, D, colors);
 build_large(tabLarge, D, simBefore, simAfter, colors);
 build_disturbances(tabDist, D, simMis, colors);
 build_flight(tabFlight, D, schedule, traj);
+if isstruct(mc) && isfield(mc, 'passRate')
+    tabMC = uitab(tabs, 'Title', 'Monte Carlo');
+    mc_dashboard_tab(tabMC, mc, tune);
+end
 
 fig.Visible = 'on';
 try
@@ -125,7 +144,10 @@ small_legend(axRate, names);
 end
 
 
-function build_stats(parent, D, runs, extras)
+function build_stats(parent, D, runs, extras, mc)
+if nargin < 5
+    mc = [];
+end
 g = uigridlayout(parent, [2 1]);
 g.RowHeight = {100, '1x'};
 g.ColumnWidth = {'1x'};
@@ -136,10 +158,20 @@ note = ['5 deg rows: solid is Simulink, dashed is the linear command. ' ...
     'Rise and settling are that linear response. Peaks, time on the stops ' ...
     'and the integrator are Simulink. The 30 deg rows reuse the liftoff ' ...
     'margins, so rise and settling are blank. Stable is the order-6 Padé test.'];
+if isstruct(mc) && isfield(mc, 'passRate')
+    note = [note sprintf([' Monte Carlo pass rate %.1f%% (%d/%d). ' ...
+        'Worst phase margin %.1f deg, worst gain margin %.1f dB, ' ...
+        'worst 30 deg rate-stop dwell %.2f s.'], ...
+        mc.passRate, mc.nPass, mc.N, mc.worst.pm, mc.worst.gm, mc.worst.tOnRate30)];
+end
 lbl = uilabel(g, 'Text', note, 'WordWrap', 'on', 'VerticalAlignment', 'top');
 lbl.Layout.Row = 1;
 lbl.Layout.Column = 1;
-uit = uitable(g, 'Data', cells_for_uitable(stats_table(D, runs, extras)), ...
+statsData = cells_for_uitable(stats_table(D, runs, extras));
+if isstruct(mc) && isfield(mc, 'passRate')
+    statsData = [statsData; mc_summary_rows(mc)];
+end
+uit = uitable(g, 'Data', statsData, ...
     'ColumnName', {'Condition', 'Stable', 'PM [deg]', 'GM up [dB]', 'GM down [dB]', ...
     'wc [rad/s]', 'Rise [s]', 'Overshoot [%]', 'Ts 5% [s]', 'Ts 2% [s]', ...
     'Peak gimbal [deg]', 'Peak rate [deg/s]', 'On angle [s]', 'On rate [s]', ...
