@@ -19,6 +19,8 @@ arguments
     opts.misalignTime (1,1) double = 12
     opts.tStop (1,1) double = NaN
     opts.shapeOn (1,1) double = 1
+    opts.lrBlend (1,1) double = NaN
+    opts.driftCorrOn (1,1) double = NaN
 end
 
 flight = find_flight(D, name);
@@ -27,6 +29,8 @@ if isnan(opts.thetaStepTime), opts.thetaStepTime = D.thetaStepTime; end
 if isnan(opts.gustSpeed),     opts.gustSpeed     = D.gustSpeed;     end
 if isnan(opts.gustTime),      opts.gustTime      = D.gustTime;      end
 if isnan(opts.tStop),         opts.tStop         = D.tStop;         end
+if isnan(opts.lrBlend),       opts.lrBlend       = D.lrBlend;       end
+if isnan(opts.driftCorrOn),   opts.driftCorrOn   = D.driftCorrOn;   end
 
 assign('tStop', opts.tStop);
 assign('thetaStep', deg2rad(opts.thetaStepDeg));
@@ -44,6 +48,13 @@ assign('Tf', D.Tf);
 assign('Kaw', D.kaw);
 assign('KawA', D.kaw / max(D.Kq, 1e-9));
 assign('shapeOn', opts.shapeOn);
+assign('lrBlend', opts.lrBlend);
+assign('qEngage', D.qEngage);
+assign('lrVfloor', D.lrVfloor);
+assign('driftCorrOn', opts.driftCorrOn);
+assign('driftKy', D.driftKy);
+assign('driftKvy', D.driftKvy);
+assign('driftCmdLimit', D.driftCmdLimit);
 assign('shapeKs', D.shapeKs);
 assign('shapeQ', D.shapeQ);
 assign('shapeE', D.shapeE);
@@ -66,6 +77,11 @@ assign('schedMu', flight.mu * [1 1]);
 assign('schedLambda', flight.lambda * [1 1]);
 assign('schedInvMu', (1 / flight.mu) * [1 1]);
 assign('schedACmdMax', (flight.mu * D.deltaMax) * [1 1]);
+assign('schedSpeed', flight.speed * [1 1]);
+assign('schedQdyn', flight.q * [1 1]);
+assign('schedAccThrust', (flight.thrust / flight.mass) * [1 1]);
+assign('schedAccAero', (flight.q * D.CNa * D.area / flight.mass) * [1 1]);
+assign('schedWind', [0 0]);
 
 assign('gustTime', opts.gustTime);
 assign('gustSpeed', opts.gustSpeed);
