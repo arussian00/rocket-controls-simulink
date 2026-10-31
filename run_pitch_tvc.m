@@ -187,7 +187,7 @@ for k = 1:numel(runs)
     r = runs{k};
     flight = D.flight([D.flight.name] == r.name);
     tLin = (0:0.01:(r.tStop - r.thetaStepTime))';
-    y = step(flight.Tcmd, tLin);
+    y = step_delay(flight.Tcmd, tLin);
     tCmd = tLin + r.thetaStepTime;
     plot(r.t, r.thetaDeg, 'Color', colors(k, :), 'LineWidth', 1.3);
     plot(tCmd, y * r.thetaStepDeg, '--', 'Color', colors(k, :), 'LineWidth', 1.1);
@@ -229,7 +229,7 @@ function plot_misalign(D, r)
 figure('Name', 'Thrust misalignment trim');
 flight = D.flight([D.flight.name] == r.name);
 tLin = (0:0.02:(r.tStop - r.misalignTime))';
-y = step(flight.Tdist * flight.mu * deg2rad(r.misalignDeg), tLin);
+y = step_delay(flight.Tdist * flight.mu * deg2rad(r.misalignDeg), tLin);
 tiledlayout(2, 1);
 nexttile
 plot(r.t, r.thetaDeg, 'LineWidth', 1.2);
@@ -309,7 +309,7 @@ end
 
 function err = linear_error(flight, r)
 tLin = (0:0.01:(r.tStop - r.thetaStepTime))';
-y = step(flight.Tcmd, tLin);
+y = step_delay(flight.Tcmd, tLin);
 tCmd = tLin + r.thetaStepTime;
 ySim = interp1(tCmd, y * r.thetaStepDeg, r.t, 'linear', 0);
 mask = r.t >= r.thetaStepTime & r.t <= r.gustTime;

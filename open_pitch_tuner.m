@@ -43,8 +43,52 @@ fprintf(['\n%s  |  mu = %.3f 1/s^2   lambda = %.4g 1/s^2\n' ...
 
 switch target
     case "pid"
-        pidTuner(flight.plant.G, D.pid);
+        open_pid_tuner(flight.plant.G, D.pid);
     case "designer"
-        controlSystemDesigner(flight.plant.G, D.Ctf);
+        open_designer(flight.plant.G, D.Ctf);
+end
+end
+
+
+function open_pid_tuner(G, C)
+% pidTuner accepts an input delay on current releases. A release that
+% refuses it gets a Padé plant, and the warning says the margins in that
+% window are then approximate.
+try
+    pidTuner(G, C);
+    return
+catch ME1
+end
+warning('open_pitch_tuner:Pade', ...
+    ['PID Tuner did not open the exact-delay plant (%s). ' ...
+     'Opening a 4th-order Padé approximation. Margins in that window ' ...
+     'are not the exact-delay margins from run_pitch_tvc.'], ME1.message);
+try
+    pidTuner(rational_delay(G, 4), C);
+catch ME2
+    error('open_pitch_tuner:PidTuner', ...
+        'Exact delay failed (%s). Padé approximation also failed (%s).', ...
+        ME1.message, ME2.message);
+end
+end
+
+
+function open_designer(G, C)
+% Root locus cannot draw a pure delay, so some releases reject the plant
+% even though the Bode editor could show it. Fall back to Padé.
+try
+    controlSystemDesigner(G, C);
+    return
+catch ME1
+end
+warning('open_pitch_tuner:Pade', ...
+    ['Control System Designer did not open the exact-delay plant (%s). ' ...
+     'Opening a 4th-order Padé approximation.'], ME1.message);
+try
+    controlSystemDesigner(rational_delay(G, 4), C);
+catch ME2
+    error('open_pitch_tuner:Designer', ...
+        'Exact delay failed (%s). Padé approximation also failed (%s).', ...
+        ME1.message, ME2.message);
 end
 end

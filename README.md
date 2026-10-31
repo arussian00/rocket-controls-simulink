@@ -99,6 +99,8 @@ with `wn = 1 rad/s` and `zeta = 0.8`. For small gimbal that is exactly `a_cmd = 
 
 `Ki` is deliberately weak. The 5% settling time stays near 4 s, which is the rigid-body response the companion was tuned for. The last fraction of a degree takes longer (2% settling near half a minute) because the integrator is slow. Raising `V.attKiOverWn3` toward 0.1 trims faster and adds overshoot; PID Tuner is the place to make that trade.
 
+`isstable` cannot judge a loop once `feedback` has turned the sensor delay into an internal delay. The `stable` column is therefore a 6th-order Padé model of that same loop (orders 4 and 6 are both checked). `margin`, `allmargin`, Bode and the step responses keep the exact delay. If a release refuses the exact delay in `step`, `bode` or the tuner apps, that call falls back to the Padé model and prints a warning.
+
 Loop gain used for margins, with `C(s) = Kp + Ki/s + Kd*s/(Tf*s+1)`:
 
 ```
@@ -268,4 +270,5 @@ Roughly in the order they build on this loop:
 | `build_pitch_model:NeedsSimulink` | Simulink is not on this license. `design_pitch_controller(vehicle_params())` still runs. |
 | Algebraic loop or rate-limiter warning on the 30 deg run | Expected while the integrators sit on the stops. The 5 deg runs should be quiet. |
 | `margin` shows about 21 dB, and you also see a large negative margin in `allmargin` | That negative one is the downward margin from the integrator. The report prints it as "Downward gain margin". The closed loop is stable when `stable` is true. |
+| `isstable` / internal delays | Fixed on this branch. Stability is a Padé test. Re-run `run_pitch_tvc`. A warning that names Padé means that one call could not use the exact delay. |
 | Tuner step looks worse than `run_pitch_tvc` | The tuner is 1-DOF, with derivative on the error and no prefilter. See section 6. |

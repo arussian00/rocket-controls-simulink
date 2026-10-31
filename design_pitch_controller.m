@@ -83,8 +83,7 @@ flight.Tdist = Tdist;
 flight.margins = loop_margins(L);
 flight.dcGain = safe_dcgain(Tcmd);
 flight.bandwidth = safe_bandwidth(Tcmd);
-flight.step2 = stepinfo(Tcmd, 'SettlingTimeThreshold', 0.02);
-flight.step5 = stepinfo(Tcmd, 'SettlingTimeThreshold', 0.05);
+[flight.step2, flight.step5] = step_metrics(Tcmd);
 end
 
 
@@ -105,6 +104,9 @@ Fp = tf(1, [D.cmdTau 1]);
 L = Cpid * P.G;                 % P.G already carries the sensor delay
 M = P.rigid * P.actuator * Cpi;
 H = Del * (1 + DtermOverCpi);
+% feedback() accepts the input delay and stores it as an internal delay.
+% step/bode/margin can use that model. isstable, pole and minreal cannot;
+% those paths go through rational_delay instead.
 Tref = feedback(M, H);          % response to the filtered command
 Tcmd = Fp * Tref;
 Tdist = feedback(P.rigid, Cpid * P.actuator * Del);
@@ -116,22 +118,29 @@ end
 
 
 function m = loop_margins(L)
-% Classical margins plus the gain-reduction margin from the integrator.
-am = allmargin(L);
+% Classical margins on the exact-delay loop, plus a Padé stability test.
+% allmargin/margin support input delays. isstable does not support the
+% internal delay that feedback() would create, so stability is judged on
+% rational_delay approximations of orders 4 and 6.
+am = margins_exact(L);
 m.all = am;
-m.stable = isstable(feedback(L, 1));
+m.stable = closed_loop_stable(L);
 
 if isempty(am.PhaseMargin)
     m.pm = NaN;
     m.wc = NaN;
     m.delayMargin = NaN;
 else
-    [m.pm, idx] = min(am.PhaseMargin);
-    m.wc = am.PMFrequency(idx);
-    if numel(am.DelayMargin) >= idx
-        m.delayMargin = am.DelayMargin(idx);
-    else
+    [m.pm, idx] = min(am.PhaseMargin(:));
+    freqs = am.PMFrequency(:);
+    m.wc = freqs(idx);
+    if isfield(am, 'DelayMargin') && numel(am.DelayMargin) >= idx
+        delays = am.DelayMargin(:);
+        m.delayMargin = delays(idx);
+    elseif m.wc > 0
         m.delayMargin = deg2rad(m.pm) / m.wc;
+    else
+        m.delayMargin = NaN;
     end
 end
 
@@ -155,11 +164,72 @@ else
     m.wGmDown = freq(neg(k));
 end
 
-[Gm, Pm, Wcg, Wcp] = margin(L);
-m.matlabGm = 20*log10(Gm);
-m.matlabPm = Pm;
-m.matlabWcg = Wcg;
-m.matlabWcp = Wcp;
+try
+    [Gm, Pm, Wcg, Wcp] = margin(L);
+    m.matlabGm = 20*log10(Gm);
+    m.matlabPm = Pm;
+    m.matlabWcg = Wcg;
+    m.matlabWcp = Wcp;
+catch ME
+    warning('design_pitch_controller:Margin', ...
+        ['margin() could not use the exact delay (%s). ' ...
+         'Reporting the allmargin result instead.'], ME.message);
+    m.matlabGm = m.gmUp;
+    m.matlabPm = m.pm;
+    m.matlabWcg = m.wGmUp;
+    m.matlabWcp = m.wc;
+end
+end
+
+
+function am = margins_exact(L)
+% allmargin supports input delays. Fall back to Padé only if this release
+% refuses the delay model, and say so.
+try
+    am = allmargin(L);
+catch ME
+    warning('design_pitch_controller:Allmargin', ...
+        ['allmargin() could not use the exact delay (%s). ' ...
+         'Margins below are for a 6th-order Padé approximation.'], ME.message);
+    am = allmargin(rational_delay(L, 6));
+end
+if ~isfield(am, 'GainMargin') || isempty(am.GainMargin)
+    am.GainMargin = NaN;
+    am.GMFrequency = NaN;
+end
+if ~isfield(am, 'PhaseMargin')
+    am.PhaseMargin = [];
+    am.PMFrequency = [];
+end
+end
+
+
+function stable = closed_loop_stable(L)
+% Two Padé orders. They agree on this loop; a disagreement is reported
+% rather than silently AND-ed into "unstable".
+s4 = pade_is_stable(L, 4);
+s6 = pade_is_stable(L, 6);
+if s4 ~= s6
+    warning('design_pitch_controller:PadeDisagree', ...
+        ['Padé orders 4 and 6 disagree on closed-loop stability ' ...
+         '(order 4 stable = %d, order 6 stable = %d). ' ...
+         'Reporting the order-6 result.'], ...
+        double(s4), double(s6));
+end
+stable = s6;
+end
+
+
+function stable = pade_is_stable(L, n)
+% Padé first, then feedback, so the closed loop has no internal delay.
+% If a release still refuses isstable, pole() on a second Padé is the backup.
+Tcl = feedback(rational_delay(L, n), 1);
+try
+    stable = isstable(Tcl);
+catch
+    p = pole(rational_delay(Tcl, n));
+    stable = ~isempty(p) && all(real(p) < 1e-6);
+end
 end
 
 
@@ -229,8 +299,25 @@ end
 
 
 function wb = safe_bandwidth(Tcmd)
+% bandwidth() rejects internal delays. freqresp does not.
 try
     wb = bandwidth(Tcmd);
+    if ~isempty(wb) && all(isfinite(wb))
+        return
+    end
+catch
+end
+try
+    w = logspace(-2, 2, 2000);
+    h = squeeze(freqresp(Tcmd, w));
+    mag = abs(h(:));
+    dc = mag(1);
+    below = find(mag < dc/sqrt(2), 1, 'first');
+    if isempty(below) || below == 1
+        wb = NaN;
+    else
+        wb = w(below);
+    end
 catch
     wb = NaN;
 end
@@ -238,10 +325,67 @@ end
 
 
 function dc = safe_dcgain(sys)
+% dcgain() is not reliable once feedback() has stored the delay internally.
 try
     dc = dcgain(sys);
+    if isfinite(dc)
+        return
+    end
+catch
+end
+try
+    h = freqresp(sys, 1e-4);
+    dc = real(h(1));
 catch
     dc = NaN;
+end
+end
+
+
+function [info2, info5] = step_metrics(sys)
+% stepinfo() calls isstable on some releases and errors on internal delays.
+% step() is the supported simulation. Both thresholds share one response.
+% The reference is 1: Tcmd is the response to a unit pitch command.
+t = linspace(0, 90, 4501).';
+y = step_delay(sys, t);
+info5 = metrics_at(t, y, 0.05);
+info2 = metrics_at(t, y, 0.02);
+end
+
+
+function info = metrics_at(t, y, thresh)
+ref = 1;
+info.RiseTime = crossing_time(t, y, 0.9*ref) - crossing_time(t, y, 0.1*ref);
+peak = max(y);
+info.Overshoot = max(0, (peak - ref) / abs(ref) * 100);
+info.Peak = peak;
+[~, iPeak] = max(y);
+info.PeakTime = t(iPeak);
+outside = find(abs(y - ref) > thresh * abs(ref));
+if isempty(outside)
+    info.SettlingTime = 0;
+elseif outside(end) == numel(t)
+    info.SettlingTime = NaN;
+else
+    info.SettlingTime = t(outside(end));
+end
+end
+
+
+function tCross = crossing_time(t, y, level)
+idx = find(y >= level, 1, 'first');
+if isempty(idx)
+    tCross = NaN;
+elseif idx == 1
+    tCross = t(1);
+else
+    dy = y(idx) - y(idx-1);
+    if dy == 0
+        tCross = t(idx);
+    else
+        frac = (level - y(idx-1)) / dy;
+        tCross = t(idx-1) + frac * (t(idx) - t(idx-1));
+    end
 end
 end
 
@@ -263,8 +407,10 @@ fprintf('Kp = %.4g 1/s^2    Ki = %.4g 1/s^3    Kd = %.4g 1/s    Tf = %.3f s\n', 
     D.Kp, D.Ki, D.Kd, D.Tf);
 fprintf('Actuator %.1f Hz, zeta %.2f, rate limit %.0f deg/s, angle limit %.0f deg\n', ...
     V.actHz, V.actZeta, V.gimbalRateDeg, V.gimbalMaxDeg);
-fprintf('Sensor delay %.0f ms,  command prefilter %.2f s (outside the loop)\n\n', ...
+fprintf('Sensor delay %.0f ms,  command prefilter %.2f s (outside the loop)\n', ...
     1e3*V.sensorDelay, V.cmdTau);
+fprintf(['Stability uses a 6th-order Padé model (isstable cannot see internal\n' ...
+    'delays). Margins, Bode and step responses use the exact delay.\n\n']);
 
 fprintf('%-10s %8s %8s %8s %10s %8s %8s %8s %8s %8s\n', ...
     'Condition', 'm [t]', 'T/W', 'q [kPa]', 'mu [1/s2]', ...
@@ -325,7 +471,7 @@ end
 function plot_design(D)
 names = [D.flight.name];
 figure('Name', 'Pitch TVC loop gain');
-bode(D.flight(1).L, D.flight(2).L, D.flight(3).L, {0.05, 200});
+bode_exact(D.flight(1).L, D.flight(2).L, D.flight(3).L, {0.05, 200});
 grid on
 legend(cellstr(names), 'Location', 'southwest');
 title('Loop gain  a_{cmd} back to a_{cmd}');
@@ -334,7 +480,7 @@ figure('Name', 'Pitch TVC command step');
 tCmd = linspace(0, 20, 500);
 hold on
 for k = 1:numel(D.flight)
-    y = step(D.flight(k).Tcmd, tCmd);
+    y = step_delay(D.flight(k).Tcmd, tCmd);
     plot(tCmd, y * D.thetaStepDeg, 'LineWidth', 1.2);
 end
 grid on
@@ -350,7 +496,7 @@ nexttile
 hold on
 misDeg = 0.5;
 for k = 1:numel(D.flight)
-    y = step(D.flight(k).Tdist, tDist);
+    y = step_delay(D.flight(k).Tdist, tDist);
     plot(tDist, rad2deg(y * D.flight(k).mu * deg2rad(misDeg)), 'LineWidth', 1.2);
 end
 grid on
@@ -361,7 +507,7 @@ legend(cellstr(names), 'Location', 'northeast');
 
 nexttile
 f = flight_named(D.flight, "max-q");
-y = step(f.Tdist, tDist);
+y = step_delay(f.Tdist, tDist);
 plot(tDist, rad2deg(y * f.gustAccPerWind * D.gustSpeed), 'LineWidth', 1.2);
 grid on
 xlabel('Time [s]');
@@ -393,6 +539,26 @@ ylabel('Pitch [deg]');
 legend('Open loop', 'Closed loop (rigid body)', 'Location', 'northwest');
 title(sprintf('Max-q, 1 deg initial pitch, unstable pole %.3f rad/s', ...
     flight.unstablePole));
+end
+
+
+function bode_exact(varargin)
+% bode supports input delays. If a release still refuses the model, draw
+% the Padé loop and warn rather than dropping the figure.
+try
+    bode(varargin{:});
+catch ME
+    warning('design_pitch_controller:Bode', ...
+        ['bode() could not use the exact delay (%s). ' ...
+         'The figure is a 6th-order Padé approximation.'], ME.message);
+    args = varargin;
+    for k = 1:numel(args)
+        if isa(args{k}, 'DynamicSystem') || isa(args{k}, 'lti')
+            args{k} = rational_delay(args{k}, 6);
+        end
+    end
+    bode(args{:});
+end
 end
 
 
