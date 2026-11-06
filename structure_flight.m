@@ -25,7 +25,13 @@ S.notchDepthDb = 20 * log10(c.notchZetaZ / c.notchZetaP);
 S.f1RefHz = c.f1RefHz;
 S.sloshZeta = c.sloshZeta;
 
-check_rigid_reduction(D, V);
+[D, mps, rebuilt] = resolve_flight_mass(D, V);
+if rebuilt
+    fprintf(['structure_flight: D.flight has no massProps field after the design copy.\n' ...
+        'Rebuilt the tank CG, inertia, mu and lambda from mass, thrust, q and length.\n' ...
+        'Fields on D.flight(1): %s\n'], field_list(D.flight(1)));
+end
+check_rigid_reduction(D, V, mps{1});
 
 n = height(traj);
 S.t = traj.t_s(:);
@@ -64,7 +70,7 @@ for k = 1:numel(D.flight)
     [Tcmd, Tdist] = notched_command(D, D.flight(k), V);
     D.flight(k).TcmdNotch = Tcmd;
     D.flight(k).TdistNotch = Tdist;
-    S.points(k) = point_margins(D, V, D.flight(k).massProps, D.flight(k).name, true); %#ok<AGROW>
+    S.points(k) = point_margins(D, V, mps{k}, D.flight(k).name, true); %#ok<AGROW>
 end
 
 keep = margin_samples(traj);
@@ -99,7 +105,7 @@ S.worstGm = worst_of(S, S.gm, true);
 S.worstBend = worst_of(S, S.bendGm(:, 1), true);
 S.worstPm.stable = stable_at(D, V, traj, S.worstPm.idx);
 S.worstGm.stable = stable_at(D, V, traj, S.worstGm.idx);
-S.bode = liftoff_bode(D, V);
+S.bode = liftoff_bode(D, V, mps{1});
 
 D.structure = S;
 print_structure(S);
@@ -157,8 +163,7 @@ gm = -peakDb;
 end
 
 
-function bode = liftoff_bode(D, V)
-mp = D.flight(1).massProps;
+function bode = liftoff_bode(D, V, mp)
 slosh = slosh_model(mp);
 bend = bending_model(mp, V);
 P = flex_pitch_plant(mp, slosh, bend, V);
@@ -276,10 +281,30 @@ text = strjoin(bits, '; ');
 end
 
 
-function check_rigid_reduction(D, V)
+function [D, mps, rebuilt] = resolve_flight_mass(D, V)
+% One mass-property struct per design point, independent of whether the
+% nested massProps field survived design_pitch_controller's struct copy.
+n = numel(D.flight);
+mps = cell(1, n);
+rebuilt = false;
+for k = 1:n
+    had = isfield(D.flight, 'massProps') && isfield(D.flight(k), 'massProps') ...
+        && isstruct(D.flight(k).massProps) && isfield(D.flight(k).massProps, 'mu');
+    if ~had
+        rebuilt = true;
+    end
+    [mps{k}, bendWn, bendHz] = flight_mass_props(D.flight(k), V);
+    if ~isfield(D.flight, 'bendWn') || isempty(D.flight(k).bendWn)
+        D.flight(k).bendWn = bendWn;
+        D.flight(k).bendHz = bendHz;
+    end
+end
+end
+
+
+function check_rigid_reduction(D, V, mp)
 % Empty slosh and bending must reproduce pitch_plant. A mismatch means the
 % sign convention or the mu cancellation drifted.
-mp = D.flight(1).massProps;
 P = flex_pitch_plant(mp, [], [], V);
 m = loop_margins(D.Ctf * P.sys, checkStability=false);
 ref = D.flight(1).margins;
@@ -295,6 +320,16 @@ end
 
 function S = empty_result()
 S = struct();
+end
+
+
+function text = field_list(flight)
+names = fieldnames(flight);
+if isempty(names)
+    text = '(none)';
+else
+    text = strjoin(names(:).', ', ');
+end
 end
 
 
