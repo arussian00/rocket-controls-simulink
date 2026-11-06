@@ -9,8 +9,8 @@ function m = drift_correction_margins(D, thrust, mass, mu, lambda)
 %       L = (driftKvy*s + driftKy) * Tcmd(s) * (thrust/mass) / s^2
 %
 %   Tcmd is the attitude command response, prefilter and sensor delay
-%   included. margin uses the exact delay. The stable flag is the Padé test
-%   in loop_margins.
+%   included. Gain and phase margins use that exact delay. The stable flag
+%   is the Padé pole consensus in loop_margins (orders 4, 6, 8 and 10).
 
 flight = struct('name', "return", 'mu', mu, 'lambda', lambda);
 P = pitch_plant(flight, D);

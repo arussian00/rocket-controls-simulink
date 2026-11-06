@@ -347,12 +347,13 @@ fprintf(['  %s  attitude loop with load relief active (blend is outside it) ' ..
 for k = 1:numel(outerMargins)
     m = outerMargins(k).margins;
     flagO = "PASS";
-    if ~(m.pm >= 30 && m.gmUp >= 6 && m.stable)
+    if ~(m.pm >= 30 && m.gmUp >= 6 && m.stable && m.stability == "stable")
         flagO = "REVIEW";
     end
     fprintf(['  %s  outer drift loop at t = %.0f s, T/m %.1f m/s^2, ' ...
-        'PM %.1f deg, GM %.1f dB\n'], ...
-        flagO, outerMargins(k).t, m.thrustOverMass, m.pm, m.gmUp);
+        'PM %.1f deg, GM %.1f dB, %s, rightmost Re = %.4f\n'], ...
+        flagO, outerMargins(k).t, m.thrustOverMass, m.pm, m.gmUp, ...
+        m.stability, m.rightmost);
 end
 
 fprintf('\nOpen the model with  open_system(''boosterPitchTVC'')\n');
@@ -371,8 +372,10 @@ for k = 1:numel(want)
     rows(k).phase = traj.phase(i);
     rows(k).margins = m;
     fprintf(['Outer drift loop at t = %.0f s (%s), thrust/mass %.1f m/s^2: ' ...
-        'PM %.1f deg, GM %.1f dB, stable %s (Padé).\n'], ...
-        rows(k).t, rows(k).phase, m.thrustOverMass, m.pm, m.gmUp, string(m.stable));
+        'PM %.1f deg, GM %.1f dB, %s, rightmost closed-loop Re = %.4f ' ...
+        '(Padé orders 4, 6, 8, 10).\n'], ...
+        rows(k).t, rows(k).phase, m.thrustOverMass, m.pm, m.gmUp, ...
+        m.stability, m.rightmost);
 end
 end
 

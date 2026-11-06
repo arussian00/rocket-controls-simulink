@@ -4,10 +4,14 @@ function m = loop_margins(L, opts)
 %   m = loop_margins(L)
 %   m = loop_margins(L, checkStability=false)
 %
-%   allmargin and margin keep the delay in L. isstable cannot see the
-%   internal delay that feedback() would create, so the stability flag uses
-%   rational_delay (Padé orders 4 and 6). Skip that flag on a long schedule
-%   sweep; the 6 dB / 30 deg test does not need it.
+%   allmargin keeps the exact delay for the gain and phase margins.
+%   The stability flag is the closed-loop poles of Padé orders 4, 6, 8
+%   and 10. They must agree, and every pole must lie in the open left
+%   half-plane. margin() is not called on a model that already has an
+%   internal delay: that call warns that the closed loop is unstable when
+%   it cannot certify the interconnection. It is called on the order-6
+%   Padé model instead, the same model the pole test uses. Skip the pole
+%   test on a long schedule sweep; the 6 dB / 30 deg test does not need it.
 
 arguments
     L
@@ -16,10 +20,14 @@ end
 
 am = margins_exact(L);
 m.all = am;
+m.delayStable = delay_stable_flag(am);
 if opts.checkStability
-    m.stable = closed_loop_stable(L);
+    [m.stable, m.stability, m.rightmost, m.padeOrders] = pade_consensus(L);
 else
     m.stable = false;
+    m.stability = "unchecked";
+    m.rightmost = NaN;
+    m.padeOrders = [];
 end
 
 if isempty(am.PhaseMargin)
@@ -60,15 +68,26 @@ else
     m.wGmDown = freq(neg(k));
 end
 
+% margin() on a model that already contains an internal delay warns
+% "The closed-loop system is unstable" when it will not certify that
+% interconnection, including when the closed-loop poles are in the left
+% half-plane. Ask margin() about the same order-6 Padé model whose poles
+% were just tested, so a warning and the stability flag cannot disagree.
+% Input-delay attitude loops stay on the exact delay: margin() accepts
+% those and does not warn.
+LforMargin = L;
+if internal_delay(L)
+    LforMargin = rational_delay(L, 6);
+end
 try
-    [Gm, Pm, Wcg, Wcp] = margin(L);
+    [Gm, Pm, Wcg, Wcp] = margin(LforMargin);
     m.matlabGm = 20*log10(Gm);
     m.matlabPm = Pm;
     m.matlabWcg = Wcg;
     m.matlabWcp = Wcp;
 catch ME
     warning('loop_margins:Margin', ...
-        ['margin() could not use the exact delay (%s). ' ...
+        ['margin() could not use the model it was given (%s). ' ...
          'Reporting the allmargin result instead.'], ME.message);
     m.matlabGm = m.gmUp;
     m.matlabPm = m.pm;
@@ -98,25 +117,87 @@ end
 end
 
 
-function stable = closed_loop_stable(L)
-s4 = pade_is_stable(L, 4);
-s6 = pade_is_stable(L, 6);
-if s4 ~= s6
+function [stable, status, rightmost, orders] = pade_consensus(L)
+% Closed-loop poles of several Padé orders. One order is not a proof:
+% they have to agree, and every pole has to sit in the open left half-plane.
+% pole() on the unreduced feedback model keeps hidden modes that a
+% cancelled input-output map would drop.
+orders = [4 6 8 10];
+rights = nan(size(orders));
+flags = false(size(orders));
+failed = false(size(orders));
+for k = 1:numel(orders)
+    [flags(k), rights(k), failed(k)] = pade_poles_stable(L, orders(k));
+end
+rightmost = max(rights);
+if any(failed) || any(isnan(rights))
+    stable = false;
+    status = "indeterminate";
     warning('loop_margins:PadeDisagree', ...
-        ['Padé orders 4 and 6 disagree on closed-loop stability ' ...
-         '(order 4 stable = %d, order 6 stable = %d). ' ...
-         'Reporting the order-6 result.'], double(s4), double(s6));
+        ['Padé orders %s did not all return closed-loop poles ' ...
+         '(rightmost Re by order: %s). The stability flag is not true.'], ...
+        sprintf('%d ', orders), sprintf('%.4g ', rights));
+elseif all(flags)
+    stable = true;
+    status = "stable";
+elseif ~any(flags)
+    stable = false;
+    status = "unstable";
+    warning('loop_margins:Unstable', ...
+        ['Closed-loop poles of Padé orders %s are not in the open left ' ...
+         'half-plane (rightmost Re = %.4g).'], ...
+        sprintf('%d ', orders), rightmost);
+else
+    stable = false;
+    status = "indeterminate";
+    warning('loop_margins:PadeDisagree', ...
+        ['Padé orders %s disagree on closed-loop stability ' ...
+         '(rightmost Re by order: %s). The stability flag is not true.'], ...
+        sprintf('%d ', orders), sprintf('%.4g ', rights));
 end
-stable = s6;
 end
 
 
-function stable = pade_is_stable(L, n)
-Tcl = feedback(rational_delay(L, n), 1);
+function [stable, rightmost, failed] = pade_poles_stable(L, n)
+failed = false;
+stable = false;
+rightmost = NaN;
 try
-    stable = isstable(Tcl);
+    Tcl = feedback(rational_delay(L, n), 1);
+    p = pole(Tcl);
 catch
-    p = pole(rational_delay(Tcl, n));
-    stable = ~isempty(p) && all(real(p) < 1e-6);
+    failed = true;
+    return
+end
+if isempty(p)
+    failed = true;
+    return
+end
+rightmost = max(real(p));
+% +1e-8 keeps a roundoff pole on the axis from flipping the flag, and
+% still rejects a slow unstable mode.
+stable = all(real(p) < 1e-8);
+end
+
+
+function tf = internal_delay(sys)
+tf = false;
+try
+    d = sys.InternalDelay;
+    tf = ~isempty(d) && any(d(:) > 0);
+catch
+    tf = false;
+end
+end
+
+
+function flag = delay_stable_flag(am)
+% allmargin.Stable is 1, 0, or NaN (cannot assess). Empty when this
+% release does not return the field. It is recorded, not used as the
+% only verdict: on an internal delay it can be 0 while the closed-loop
+% poles are in the left half-plane.
+flag = NaN;
+if isstruct(am) && isfield(am, 'Stable') && ~isempty(am.Stable)
+    flag = am.Stable(1);
 end
 end
