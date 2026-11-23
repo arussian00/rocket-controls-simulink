@@ -10,10 +10,11 @@ function plant = mc_realize(V, draw, point)
 %   the flight computer still divides by the nominal mu.
 %
 %   On this fixed trajectory the inert mass scales with dryMass and the
-%   propellant still aboard scales with isp. I is m*L^2/12 about the
-%   geometric centre, moved to the realized CG with the parallel-axis term
-%   m*cg^2, then multiplied by the inertia factor. At the 1.2 m 3-sigma CG
-%   offset that term is under one percent of I.
+%   propellant still aboard scales with isp. The CG, inertia, gimbal arm
+%   and aero stiffness come from vehicle_mass_properties (the tank model),
+%   then the CG offset, inertia factor, CNa scale and static-margin offset
+%   are applied. The guidance mu is that tank model with the draw at
+%   nominal, not the mid-length rod stored in the CSV.
 %
 %   plant.knobs is the whole draw, including reserved names (lr_blend,
 %   sloshFreq, bendingFreq, gridFinEff) that this rigid plant does not use.
@@ -25,19 +26,26 @@ end
 cfg = string(point.config);
 if cfg == "stack"
     dry = V.mDryBooster + V.library.starship.mDry + V.library.starship.mPay;
+    refSm = V.staticMarginAscent;
 else
     dry = V.mDryBooster;
+    refSm = V.staticMarginLanding;
 end
 prop = max(point.mass - dry, 0);
 mass = dry * draw.dryMass + prop * draw.isp;
 thrust = point.thrust * draw.thrust;
-cg = draw.cg;
-arm = max(point.length / 2 + cg, 0.05 * point.length);
-I = (mass * point.length^2 / 12 + mass * cg^2) * draw.inertia;
-lcp = point.lcp - cg - draw.staticMargin * V.diam;
-lambda = point.q * (V.CNa * draw.cna) * V.area * lcp / I;
-muTrue = thrust * arm * V.gimbalThrustFraction / I;
-muCmd = max(point.mu, 1e-6);
+% Truth mass properties are the tank model, then the draw. The guidance
+% mu is the same model with the draw held at nominal, so a thrust or CG
+% error is not cancelled by rewriting the schedule. The rod column in the
+% CSV is not the schedule anymore.
+mp = vehicle_mass_properties(mass, thrust, point.q, cfg, V, refSm);
+mpCmd = vehicle_mass_properties(point.mass, point.thrust, point.q, cfg, V, refSm);
+arm = max(mp.arm + draw.cg, 0.05 * mp.length);
+I = mp.I * draw.inertia;
+lcp = mp.lcp - draw.staticMargin * V.diam;
+lambda = point.q * (V.CNa * draw.cna) * V.area * lcp / max(I, 1);
+muTrue = thrust * arm * V.gimbalThrustFraction / max(I, 1);
+muCmd = max(mpCmd.mu, 1e-6);
 if point.speed > 1 && lambda ~= 0
     gustAcc = -lambda / point.speed;
 else

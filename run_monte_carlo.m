@@ -44,8 +44,8 @@ function MC = run_monte_carlo(opts)
 %   Each Simulink cross-check adds a few seconds. N=40 is a quick look.
 %   The command window prints the pass rate, the worst cases, and how
 %   many runs missed each requirement. Margins and the 5 deg step clear
-%   the floor on the NumPy cross-check of this same table; the misses are
-%   the 30 deg step against a slow dispersed rate stop.
+%   the floor when the fast frequency grid agrees with loop_margins; the
+%   misses are the 30 deg step against a slow dispersed rate stop.
 
 arguments
     opts.N (1,1) double = 200
@@ -98,7 +98,7 @@ end
 t0 = tic;
 for i = 1:opts.N
     [pmRun, gmRun, wherePm, stableOk, pmRow, gmRow] = margins_one( ...
-        D, V, draws(i), designPts, stations);
+        D, V, draws(i), designPts, stations, nominalReport.fastAgrees);
     % Liftoff dynamic pressure is zero, so the 15 m/s gust and the wind
     % bias do not move this 5 deg case. They still change max-q margins
     % through lambda, and the wind draw is on plant.knobs.
@@ -171,16 +171,27 @@ end
 plant = mc_realize(V, draw, V.flight(1));
 r5 = mc_closed_loop(D, plant, step_scenario(5, 22, 1, 0, dt, false));
 r30 = mc_closed_loop(D, plant, step_scenario(30, D_large_stop(V), 1, 0, dt, false));
-mFast = mc_fast_margins(D, 1, 0, V.sensorDelay, V.actHz, V.actZeta);
-L = loop_at(D, plant);
+L = plant_loop(D, V, plant);
 mLoop = loop_margins(L, checkStability=true);
+mFast = mc_fast_margins(D, plant.ratio, plant.lambda, plant.delay, plant.actHz, plant.actZeta);
+fastOk = isfinite(mFast.pm) && isfinite(mLoop.pm) ...
+    && abs(mFast.pm - mLoop.pm) < 1.5 ...
+    && abs(mFast.gm - mLoop.gmUp) < 0.8;
+if ~fastOk
+    warning('run_monte_carlo:FastPath', ...
+        ['Frequency-grid margins (PM %.2f deg, GM %.2f dB) do not match ' ...
+         'loop_margins on pitch_plant (PM %.2f deg, GM %.2f dB). ' ...
+         'Flight stations will use loop_margins.'], ...
+        mFast.pm, mFast.gm, mLoop.pm, mLoop.gmUp);
+end
 fprintf(['Fast 5 deg:  gimbal %.2f deg (published 2.8), rate %.2f deg/s (10.7)\n' ...
     'Fast 30 deg: gimbal %.2f deg (published 6.7), rate %.2f deg/s (18.1), ' ...
     'final %.2f deg (30.6), on angle %.3f s, on rate %.3f s\n'], ...
     r5.gimDeg, r5.rateDeg, r30.gimDeg, r30.rateDeg, r30.finalDeg, r30.tOnAngle, r30.tOnRate);
 fprintf(['Liftoff margins: frequency grid PM %.2f deg, GM %.2f dB; ' ...
-    'loop_margins PM %.2f deg, GM %.2f dB, stable %d\n'], ...
-    mFast.pm, mFast.gm, mLoop.pm, mLoop.gmUp, mLoop.stable);
+    'pitch_plant + loop_margins PM %.2f deg, GM %.2f dB, %s. Fast path %s.\n'], ...
+    mFast.pm, mFast.gm, mLoop.pm, mLoop.gmUp, mLoop.stability, ...
+    string(fastOk));
 report.gim5 = r5.gimDeg;
 report.rate5 = r5.rateDeg;
 report.gim30 = r30.gimDeg;
@@ -191,10 +202,11 @@ report.gmFast = mFast.gm;
 report.pmLoop = mLoop.pm;
 report.gmLoop = mLoop.gmUp;
 report.stable = mLoop.stable;
+report.fastAgrees = fastOk;
 end
 
 
-function [pmRun, gmRun, wherePm, stableOk, pmRow, gmRow] = margins_one(D, V, draw, designPts, stations)
+function [pmRun, gmRun, wherePm, stableOk, pmRow, gmRow] = margins_one(D, V, draw, designPts, stations, useFast)
 pmRun = inf;
 gmRun = inf;
 wherePm = "";
@@ -203,53 +215,57 @@ gmRow = nan(1, numel(stations));
 stableOk = true;
 for k = 1:numel(designPts)
     plant = mc_realize(V, draw, designPts(k));
-    m = mc_fast_margins(D, plant.ratio, plant.lambda, plant.delay, plant.actHz, plant.actZeta);
+    % The design points are the real controller and plant: pitch_plant
+    % builds the actuator, the rigid body and the delay, and loop_margins
+    % is the same test run_pitch_tvc prints.
+    m = loop_margins(plant_loop(D, V, plant), checkStability=true);
     if m.pm < pmRun
         pmRun = m.pm;
         wherePm = string(designPts(k).name) + " (design)";
     end
-    gmRun = min(gmRun, m.gm);
-    if ~pade_stable_plant(D, plant)
+    gmRun = min(gmRun, m.gmUp);
+    if ~(m.stable && m.stability == "stable")
         stableOk = false;
     end
 end
 for k = 1:numel(stations)
     plant = mc_realize(V, draw, stations(k));
-    m = mc_fast_margins(D, plant.ratio, plant.lambda, plant.delay, plant.actHz, plant.actZeta);
-    pmRow(k) = m.pm;
-    gmRow(k) = m.gm;
-    if m.pm < pmRun
-        pmRun = m.pm;
+    if useFast
+        k = 1;
+        if exist('aero_gain_scale', 'file')
+            k = aero_gain_scale(plant.lambda);
+        end
+        m = mc_fast_margins(D, plant.ratio * k, plant.lambda, plant.delay, ...
+            plant.actHz, plant.actZeta);
+        pmHere = m.pm;
+        gmHere = m.gm;
+    else
+        m = loop_margins(plant_loop(D, V, plant), checkStability=false);
+        pmHere = m.pm;
+        gmHere = m.gmUp;
+    end
+    pmRow(k) = pmHere;
+    gmRow(k) = gmHere;
+    if pmHere < pmRun
+        pmRun = pmHere;
         wherePm = string(stations(k).phase) + sprintf(' t=%.0f s', stations(k).time);
     end
-    gmRun = min(gmRun, m.gm);
+    gmRun = min(gmRun, gmHere);
 end
 end
 
 
-function ok = pade_stable_plant(D, plant)
-% rational_delay (Padé) before isstable. feedback() would hide the delay.
-wn = 2 * pi * plant.actHz;
-Act = tf(wn^2, [1, 2 * plant.actZeta * wn, wn^2]);
-Rigid = tf(plant.ratio, [1, 0, -plant.lambda]);
-L = D.Ctf * Act * Rigid;
-L.InputDelay = plant.delay;
-Tcl = feedback(rational_delay(L, 6), 1);
-try
-    ok = isstable(Tcl);
-catch
-    p = pole(Tcl);
-    ok = ~isempty(p) && all(real(p) < 1e-6);
+function L = plant_loop(D, V, plant)
+% Same plant pitch_plant builds for the design, times the truth/guidance
+% ratio (mu_true / mu_cmd) and the aero gain scale. The delay stays on P.G.
+flight = struct('name', "mc", 'mu', max(plant.muCmd, 1e-6), 'lambda', plant.lambda);
+P = pitch_plant(flight, V, delay=plant.delay, actHz=plant.actHz, ...
+    actZeta=plant.actZeta, lambda=plant.lambda);
+k = 1;
+if exist('aero_gain_scale', 'file')
+    k = aero_gain_scale(plant.lambda);
 end
-end
-
-
-function L = loop_at(D, plant)
-wn = 2 * pi * plant.actHz;
-Act = tf(wn^2, [1, 2 * plant.actZeta * wn, wn^2]);
-Rigid = tf(plant.ratio, [1, 0, -plant.lambda]);
-L = D.Ctf * Act * Rigid;
-L.InputDelay = plant.delay;
+L = (plant.ratio * k) * D.Ctf * P.G;
 end
 
 
