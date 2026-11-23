@@ -362,14 +362,15 @@ Roughly in the order they build on this loop:
 | Schedule `mu` and `lambda` along the flight | Done for this pitch loop (`flight_margin_schedule`, Simulink lookups, Along the flight tab). |
 | Bending modes | Done for this pitch loop. Two free-free modes and a scheduled notch. Liftoff bending gain margin is about 9 dB with the notch and about −20 dB without it. |
 | Slosh | Done for this pitch loop. LOX and CH4 pendulums, frequency near the crossover at liftoff, light baffle damping. The phase margin moves by about a degree. |
-| Monte Carlo | The companion already disperses thrust, Isp, drag, dry mass and wind. Repeat that on the margins and on the 30 deg case: delay, `mu`, static margin, rate limit. |
-| Multi-loop tuning | Control System Tuner (`systune`) can tune this PID together with the guidance loop. That needs **Simulink Control Design**, which this project does not require. The plant and the loop transfers here are the starting point. |
+| Monte Carlo | Done for this pitch loop. `run_monte_carlo` disperses the companion's thrust, Isp, dry mass and wind, plus arm, inertia, aero, servo and delay. Design-point margins go through `pitch_plant` and `loop_margins`. |
+| Multi-loop tuning | `tune_with_systune` tunes this PID at several flight points with `systune` when that function is on the path, and a bounded search otherwise. It does not need Simulink Design Optimization. |
 | Hop and the orbital booster | `V.library` has their masses, thrust and 6 deg gimbal stop. They need their own liftoff / max-q / landing snapshot; the dynamics functions are the same. |
 
 ## 12. Troubleshooting
 
 | Symptom | What to do |
 |---|---|
+| Want the Monte Carlo or the tuner | `run_monte_carlo`, `tune_with_systune`, `open_pitch_cstuner`. Section 13. |
 | `Undefined function 'vehicle_params'` | Current Folder must be this project. `cd` into it. |
 | `pitch_plant:NeedsCST` or a missing `tf` / `pid` | Control System Toolbox is not on this license. The design scripts need it. |
 | `build_pitch_model:NeedsSimulink` | Simulink is not on this license. `design_pitch_controller(vehicle_params())` still runs. |
@@ -419,3 +420,37 @@ A NumPy twin of the fixed-step loop (the Descent tab) gave, approximately: catch
 `run_booster_descent` reprints these with `loop_margins` (Padé stability on the anchors). Coast above the fins is not claimed: there is no pitch authority. Handoffs in the NumPy twin moved the commands by well under 0.1 deg in any 20 ms sample inside ±1 s of the switch, and the integrator step stayed near 1e-5 rad/s.
 
 New files: `grid_fin_model.m`, `grid_fin_effectiveness.m`, `make_booster_return_trajectory.m`, `descent_targets.m`, `descent_openloop.m`, `descent_controller.m`, `build_descent_model.m`, `descent_model_init.m`, `apply_descent_workspace.m`, `run_booster_descent.m`, `descent_dashboard.m`. `run_pitch_tvc.m` only calls them. The Simulink model is `boosterDescentPitch.slx` (gitignored). If the diagram fails, the warning says so and the Descent tab still shows the fixed-step loop.
+
+The return margins use the tank CG from `vehicle_mass_properties` (not the mid-length rod in the CSV) and add the fin restoring moment to the body stiffness. `aero_gain_scale` multiplies the cascade when that net lambda outruns the nominal loop. The table above is the older fixed-CG check. `run_booster_descent` prints the moving-CG numbers; keep those.
+
+## 14. Monte Carlo and tuning
+
+The dispersed runs and the tuner are separate commands so a normal design check stays short.
+
+```matlab
+run_monte_carlo                          % N = 200, seed 42. About 1 to 3 minutes.
+run_monte_carlo(N=40)                    % a quicker look
+tune_with_systune                        % compare gains, do not write them
+tune_with_systune(apply=true)            % base workspace only, not vehicle_params.m
+tune_with_systune(robustCheck=true)      % N = 40 Monte Carlo of the tuned gains
+open_pitch_cstuner                       % Control System Tuner, goals in the workspace
+```
+
+The controller keeps the nominal `1/mu` schedule. Thrust, inert mass, propellant (`isp`), inertia, CG / gimbal arm, `C_Nα`, static margin, servo bandwidth, gimbal-rate stop, sensor delay and a wind bias hit the plant. Companion 1-sigma values are thrust 2%, Isp 1%, aero coefficient 10% (the companion's drag), dry mass 2% and wind 8 m/s. The 3-sigma half-range is three times that. Servo, delay, CG and static margin are design assumptions, documented in `mc_dispersions`. Reserved rows (`lr_blend`, `sloshFreq`, `sloshMassFrac`, `bendingFreq`, `gridFinEff`) are off until a later step sets `enabled` and a sigma. `mc_realize` copies every knob onto `plant.knobs`.
+
+Pass/fail is 30 deg and 6 dB at liftoff, max-q, landing and eight flight stations, Padé stability at the three design points, and the 5 deg and 30 deg liftoff steps (governor on) staying off the stops. The 30 deg rate check uses the run's own rate stop. A slow draw of that stop is what fails: the governor still asks for about 18 deg/s.
+
+The time response is a 2 ms fixed-step copy of the diagram. On the nominal vehicle it reproduces the published 5 deg row (about 2.8 deg and 10.7 deg/s) and the 30 deg governor-on row (about 6.7 deg, 18.1 deg/s, final near 30.6 deg, stops not touched). `nSimulink` (default 2) re-runs those two nominal cases in `boosterPitchTVC` when Simulink is licensed. `parsim` is used only if you ask for at least four Simulink runs and the Parallel Computing Toolbox license is present; otherwise the cross-check is serial.
+
+`tune_with_systune` does not change the saved gains unless `apply=true`, and even then it only assigns the base workspace. Margins in the printed comparison use `loop_margins` on the exact delay. The tuner model itself uses a 4th-order Padé, because `systune` cannot carry an internal delay into `isstable`. `open_pitch_cstuner` opens the three cascade gains in Control System Tuner as far as that app's constructor allows, and leaves `pitchTunerSoft` and `pitchTunerHard` in the workspace.
+
+To put the Monte Carlo tab on the full Pitch TVC window:
+
+```matlab
+MC = run_monte_carlo(showFigure=false);
+T = tune_with_systune;
+% after run_pitch_tvc has built D, the sims, schedule and traj:
+pitch_dashboard(D, simNominal, simBefore, simAfter, simMis, schedule, traj, MC, T)
+```
+
+`run_monte_carlo` on its own opens the same single Pitch TVC window if that figure is not already up, or adds the tab if it is. The Stats tab gains a pass-rate row and two worst-case rows. Every `uitable` cell is char or numeric. Design-point margins and the stability flag call `pitch_plant` and `loop_margins`. The frequency-grid shortcut is used on the flight stations only after it matches `loop_margins` on the nominal plant.
