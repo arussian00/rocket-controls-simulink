@@ -11,9 +11,10 @@ function outFile = make_booster_trajectory(companionDir)
 %   for use without MATLAB. After this function succeeds, re-run
 %   run_pitch_tvc so the margins and the Simulink lookups use the ode45 table.
 %
-%   Centre of mass is mid-body (the companion's uniform rod). Centre of
-%   pressure is the pitch-study static margin: -0.5 caliber on the stack,
-%   0 on the booster alone.
+%   Centre of mass, inertia, mu and lambda are written by
+%   vehicle_mass_properties (tank CG, body-fixed CP). The reference static
+%   margin that places the CP is still -0.5 caliber on the stack and 0 on
+%   the booster, which is what the rod model used at mid-length.
 
 if nargin < 1 || strlength(string(companionDir)) == 0
     companionDir = find_companion();
@@ -80,7 +81,6 @@ Lstack = 121;
 Lboost = Pb.L;
 smStack = -0.5;
 smBoost = 0.0;
-CNa = 2.0;
 names = string(fullB.phaseList);
 n = numel(fullB.t);
 phase = strings(n, 1);
@@ -118,13 +118,32 @@ for i = 1:numel(keep)
     [~, ~, aSound] = earthModel(h(i), Pb);
     mach(i) = speed(i) / aSound;
 end
-arm = len(keep) / 2;
-cg = arm;
-lcp = -sm(keep) * Pb.diam;
-cp = cg - lcp;
-I = mass .* len(keep).^2 / 12;
-mu = thrust .* arm ./ I;
-lam = q .* CNa .* Pb.A .* lcp ./ I;
+% sm(keep) is the reference margin used to place the CP, not the
+% margin after the CG has moved. vehicle_mass_properties overwrites it.
+cfgKeep = config(keep);
+smKeep = sm(keep);
+nk = numel(keep);
+cg = zeros(nk, 1);
+arm = zeros(nk, 1);
+cp = zeros(nk, 1);
+lcp = zeros(nk, 1);
+I = zeros(nk, 1);
+smOut = zeros(nk, 1);
+mu = zeros(nk, 1);
+lam = zeros(nk, 1);
+addpath(fileparts(mfilename('fullpath')));
+V = vehicle_params();
+for i = 1:nk
+    mp = vehicle_mass_properties(mass(i), thrust(i), q(i), cfgKeep(i), V, smKeep(i));
+    cg(i) = mp.cg;
+    arm(i) = mp.arm;
+    cp(i) = mp.xCp;
+    lcp(i) = mp.lcp;
+    I(i) = mp.I;
+    smOut(i) = mp.staticMarginCal;
+    mu(i) = mp.mu;
+    lam(i) = mp.lambda;
+end
 tvc = double(thrust > 1);
 T = table(fullB.t(keep), phase(keep), config(keep), h, speed, mach, q, mass, ...
     throttle, nEng(keep), thrust, len(keep), cg, arm, cp, lcp, I, sm(keep), ...
@@ -133,6 +152,7 @@ T = table(fullB.t(keep), phase(keep), config(keep), h, speed, mach, q, mass, ...
     'q_Pa', 'mass_kg', 'throttle', 'n_eng', 'thrust_N', 'length_m', ...
     'cg_from_nose_m', 'arm_m', 'cp_from_nose_m', 'lcp_m', 'inertia_kgm2', ...
     'static_margin_cal', 'mu_rps2', 'lambda_rps2', 'tvc_active'});
+T.static_margin_cal = smOut;
 if ~isfolder(fileparts(outFile))
     mkdir(fileparts(outFile));
 end

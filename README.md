@@ -36,7 +36,8 @@ The dashboard is a browser figure. The tab group sits in a grid that fills the w
 | **30 deg step** | 2×2: governor off (before) and on (after) for pitch, integrator, gimbal angle, and gimbal rate |
 | **Disturbances** | Thrust-misalignment pitch and gimbal, and the max-q open-loop drift |
 | **Load relief** | Through max-q, for `lr_blend` 0, 0.5 and 1: q·alpha, lateral drift, the trade of those peaks, and gimbal angle |
-| **Along the flight** | Phase and gain margins versus time for the 1/mu schedule and for a frozen liftoff gain. Black dots are the three design points. Red x marks samples under 6 dB or 30 deg |
+| **Along the flight** | Phase and gain margins versus time for the rigid 1/mu schedule and for a frozen liftoff gain. Markers are the three design points. Samples under 6 dB or 30 deg are marked |
+| **Structure & slosh** | CG, gimbal arm and inertia; slosh and bending frequencies with the gain crossover; liftoff Bode with and without the notch; flex margins versus time |
 
 | Command | What you get |
 |---|---|
@@ -51,7 +52,7 @@ The first run takes a few seconds of design work and a few seconds per simulatio
 
 ## 2. What is being controlled
 
-One axis: pitch of the nose from the trim attitude, using one equivalent gimbal angle. The companion's sign is kept. Positive gimbal produces positive pitch acceleration (nose downrange). Torque is `F * arm * sin(delta)`, with the centre of mass at mid-length and `I = m*L^2/12`, the same rigid rod as `attitudeControl`.
+One axis: pitch of the nose from the trim attitude, using one equivalent gimbal angle. The companion's sign is kept. Positive gimbal produces positive pitch acceleration (nose downrange). Torque is `F * arm * sin(delta)`. The companion uses a uniform rod (`I = m*L^2/12`, arm `L/2`). This study replaces that with LOX and CH4 tanks, so the centre of mass, the inertia and the gimbal arm move as the propellant burns. See section 4b.
 
 Three frozen conditions, gain-scheduled. Liftoff and max-q are the full stack (Super Heavy + Starship). Landing is the booster alone on the three centre engines.
 
@@ -59,16 +60,19 @@ Three frozen conditions, gain-scheduled. Liftoff and max-q are the full stack (S
 |---|---|---|---|
 | What it is | 33 engines, vertical, on the pad | T+46 s, throttle bucket | 3 engines, ~1 km, ~55 t propellant left |
 | Mass | 5260 t | 4224 t | 285 t |
-| Length used for `I` and the gimbal arm | 121 m (71+50) | 121 m | 71 m |
+| Vehicle length | 121 m (71+50) | 121 m | 71 m |
 | Throttle | 100% | 75% | 70% |
 | Thrust / weight | 1.47 | 1.37 | 1.73 |
 | Dynamic pressure | 0 | 22.37 kPa | 3.56 kPa |
-| `mu = F*arm/I` | 0.716 /s² | 0.668 /s² | 1.432 /s² |
-| Unstable pole | none (`q = 0`) | 0.050 rad/s | none (static margin 0) |
+| CG from the nose | 71.3 m | 69.5 m | 44.9 m |
+| Gimbal arm | 48.2 m | 50.0 m | 24.6 m |
+| `mu = F*arm/I` | 0.650 /s² | 0.527 /s² | 0.633 /s² |
+| Static margin | −1.70 cal | −1.50 cal | −1.05 cal |
+| Unstable pole | none (`q = 0`) | 0.084 rad/s | 0.15 rad/s |
 
 Max-q mass, altitude (5.88 km) and speed (259 m/s) are a snapshot of the companion's `starshipStack` ascent (33 Raptors, 75% throttle bucket, gravity turn). An RK4 integration of that model at 0.05 s reproduces the companion README: max-q about 22 kPa near T+46 s. Dynamic pressure in this repo is recomputed from that altitude and speed with the US76 troposphere, the same layer `earthModel.m` uses.
 
-`mu` is the small-signal pitch acceleration per radian of gimbal. The schedule is `delta_cmd = a_cmd / mu`. One cascade, in acceleration units, is used at every condition. Heavier vehicles and lower throttle ask for more gimbal for the same acceleration. The 30 deg liftoff step is the large-maneuver case: without the command governor the gimbal reaches its stops, and with the governor it does not.
+`mu` is the small-signal pitch acceleration per radian of gimbal. The schedule is `delta_cmd = a_cmd / mu`. One cascade, in acceleration units, is used at every condition. Heavier vehicles and lower throttle ask for more gimbal for the same acceleration. Gimbal angle on the 5 deg and 30 deg runs scales with `1/mu`. Liftoff `mu` is 0.65 /s² with the tank CG, against 0.72 /s² for the old mid-length rod, so those peaks move by about ten percent. The checklist `run_pitch_tvc` prints is the number to keep. The 30 deg liftoff step is the large-maneuver case: without the command governor the gimbal reaches its stops, and with the governor it does not.
 
 ## 3. Plant
 
@@ -210,13 +214,25 @@ Actuator natural frequency (damping 0.7, delay 20 ms):
 
 Static margin at max-q from 0 to −50 calibers leaves the phase margin at about 64 deg. The open-loop drift figure is still worth looking at: from 1 deg of initial pitch, the uncontrolled max-q pole walks off over a minute, and the loop holds it.
 
+## 4b. Mass properties, slosh and bending
+
+`vehicle_mass_properties` builds the CG, the pitch inertia and the gimbal arm from the trajectory mass and the companion's Super Heavy and Starship numbers (dry mass, propellant load, length, diameter). Propellant is split LOX/methane at a Raptor mixture ratio of 3.6. Both tanks of a stage drain together. The centre of pressure stays at the body station that used to give −0.5 caliber on the stack and 0 on the booster when the CG was at mid-length, so the static margin now moves with the CG. `mu = F*arm/I` and `lambda = q*CNa*A*(x_cg - x_cp)/I` are what the 1/mu schedule and the flight-margin sweep read. On ascent the CG walks from about 71 m to about 50 m (the ship is still full while the booster tanks empty), and the arm grows. At staging the ship leaves and the arm drops to about 20 m.
+
+Slosh is the NASA SP-106 pendulum for a round tank (`lambda1 = 1.841`), one mode each for ship and booster LOX and CH4. Frequency follows axial specific force `T/m` and fill height. Baffle damping is 0.05. At liftoff every tank is deep, so all four modes sit at **0.39 Hz**, on top of the 0.33 Hz gain crossover. The forward ship tanks move the loop gain by a few dB there. With that damping the phase margin only shifts by about a degree. The aft booster LOX, closer to the CG, barely shows up until the tanks are shallow. On the landing burn the booster modes have fallen to about **0.18 Hz**.
+
+Bending is two free-free beam modes. The first is placed at **3.5 Hz** on the full stack at liftoff (between the attitude crossover and the 6 Hz servo; the companion has no structural frequency) and then scales as `1/sqrt(m L^3)`. The second mode is 2.76 times the first (**9.6 Hz** at liftoff). Damping is 1%. The IMU is at 8% of the length from the nose. The gimbal force is applied 1.5 m forward of the aft end. Without a filter the liftoff bending peak is about **20 dB above** 0 dB and the phase margin is about **−29 deg**.
+
+The notch is one second-order section per mode, zeros at damping 0.015 and poles at damping 0.40, depth **28.5 dB**, centred on that instant's bending frequencies. In the linear survey it is retuned at every sample. Each Simulink run is one frozen condition, so the diagram holds the notch for that condition (`notchNum`, `notchDen` on the sensed pitch and the sensed rate, after the 20 ms delay). With the notch, liftoff is about **60 deg and 10 dB**, and the mode-1 bending gain margin is about **9 dB** (mode 2 about 26 dB). The time-domain sims stay the rigid body plus this notch, so the 5 deg overlay still has a linear twin. Slosh and bending are in the margin survey and on the Structure & slosh tab.
+
+Along the powered flight the notched loop stays near 60 deg and 10–12 dB through ascent, boostback and the landing burn. It does not at brake ignition. Dynamic pressure there is about 277 kPa and the booster CG is aft of the fixed centre of pressure (about −1.4 caliber), so `lambda` is about **2 /s²** and the unstable pole is about **1.4 rad/s**. The phase margin is about **−60 deg at t = 399 s**. The gain margin is worst a few seconds later, under 1 dB, still in the brake. The notch does not fix that. It is an aerodynamic margin, and this model has no grid-fin moment. `run_pitch_tvc` prints the three design points and those worst cases.
+
 ## 5. Schedule along the flight
 
 `data/superheavy_booster_trajectory.csv` is a 1 Hz RK4 history of the companion Super Heavy mission: stack ascent to hot staging, then flip, boostback, coast, brake and landing. It carries mass, throttle, engine count, thrust, dynamic pressure, Mach, speed, pitch inertia, the mid-body centre of mass, and the centre of pressure from the static-margin assumption. Flip and coast are in the table with `tvc_active = 0` (engines off). There is no entry burn (`engEntry = 0`).
 
 `make_booster_trajectory` rewrites that file with the companion's `ode45` once `matlab-rocket-sim` is on the path. Until then the RK4 snapshot is what `run_pitch_tvc` loads.
 
-The normalised cascade does not change. The Simulink lookups make `mu`, `lambda` and `1/mu` functions of flight time, so the gimbal gain tracks control effectiveness. With that schedule the linear margins stay near **64 deg and 19.4 dB** wherever the engines are lit (they only move with `lambda`, which stays near zero on this aero model). A NumPy check puts the scheduled worst case at **t = 0 s, 64.0 deg and 19.4 dB, 0 samples under the floor**. A liftoff gain frozen in gimbal units does not. The same check puts the worst fixed-gain point at **t = 185 s, boostback: about 5.4 deg and 0.8 dB** (`mu` about 6.1 /s², 8.5 times liftoff), with **12 samples** under 6 dB or 30 deg. The Along the flight tab draws both curves, marks liftoff, max-q and the 1 km landing point, and puts a red x on fixed-gain samples under the floor. `run_pitch_tvc` prints the same worst cases from Control System Toolbox. The heavier rate gain (`Kd` 2 instead of 1.6) is why the fixed-gain worst case moved down from the previous 16 deg / 2.7 dB. The schedule is what holds the margin.
+The normalised cascade does not change. The Simulink lookups make `mu`, `lambda` and `1/mu` functions of flight time, so the gimbal gain tracks control effectiveness. Those two coefficients now come from the tank model in section 4b, not from the mid-length rod. On ascent `lambda` is still small next to `mu`, so the rigid scheduled margins stay near **64 deg and 19 dB**. They do not stay there through the brake. At brake ignition `q` is about 277 kPa and the CG is aft of the fixed centre of pressure, and the rigid phase margin goes negative with the flex one (about −60 deg at t = 399 s). A liftoff gain frozen in gimbal units still loses the boostback, because `mu` still grows as the booster gets light. The Along the flight tab draws both rigid curves. The Structure & slosh tab draws the loop with slosh, bending and the notch. `run_pitch_tvc` prints both worst cases.
 
 ## 6. Simulink model
 
@@ -259,7 +275,7 @@ The plant handed to the app is `a_cmd` to `theta` (rigid body, actuator, sensor 
 
 The app's step response is the 1-DOF loop: derivative of the error, no command prefilter. A step in that view kicks the derivative channel. Margins are the ones that match the model. Use the Bode and margin views to tune, and use `run_pitch_tvc` for the step the vehicle actually flies.
 
-Gains in the tuner are acceleration gains. Gimbal in radians is `a_cmd/mu`. `mu` is printed when the tuner opens (0.716, 0.668 and 1.43 at the three conditions).
+Gains in the tuner are acceleration gains. Gimbal in radians is `a_cmd/mu`. `mu` is printed when the tuner opens (about 0.65, 0.53 and 0.63 at the three conditions).
 
 To keep a hand-tuned result, set `V.Kq`, `V.Kth` or `V.KiTh` before `design_pitch_controller`. A pasted `V.Kp`, `V.Ki` or `V.Kd` still wins, and the cascade is rebuilt from that PID so the diagram matches the margins. Example:
 
@@ -276,6 +292,16 @@ D = design_pitch_controller(V);
 | File | Role |
 |---|---|
 | `vehicle_params.m` | Companion vehicle numbers, design assumptions, three flight conditions |
+| `vehicle_mass_properties.m` | CG, inertia, arm, `mu` and `lambda` from the LOX/CH4 layout |
+| `apply_mass_properties.m` | Writes those columns onto the trajectory table at load |
+| `slosh_model.m` | Pendulum slosh for each LOX and CH4 tank |
+| `bending_model.m` | Two free-free bending modes, frequency versus mass and length |
+| `flex_pitch_plant.m` | `a_cmd` to measured pitch with slosh, bending, actuator and delay |
+| `notch_tf.m`, `notch_for_flight.m` | Sensor notch, and the Simulink numerator and denominator |
+| `notched_command.m` | Rigid command response with the notch, for the Simulink overlay |
+| `structure_flight.m` | Margins versus time with slosh, bending and the notch |
+| `structure_constants.m` | Mixture ratio, densities, damping, notch depth, 3.5 Hz reference |
+| `structure_dashboard_tab.m`, `structure_stats_block.m` | Structure & slosh tab and the extra Stats block |
 | `pitch_plant.m` | Linear plant `a_cmd -> theta` |
 | `design_pitch_controller.m` | PID, margins, sweeps, linear plots |
 | `apply_pitch_condition.m` | Writes one condition into the base workspace |
@@ -291,17 +317,17 @@ D = design_pitch_controller(V);
 | `loop_margins.m` | Exact-delay margins and the Padé stability test |
 | `data/superheavy_booster_trajectory.csv` | RK4 trajectory snapshot (mass, thrust, q, mu, lambda, CG, CP) |
 | `tools/build_superheavy_trajectory.py` | Script that wrote the snapshot |
-| `pitch_dashboard.m` | The single Pitch TVC window, including the Load relief tab |
+| `pitch_dashboard.m` | The single Pitch TVC window, including Load relief and Structure & slosh |
 | `open_pitch_tuner.m` | PID Tuner or Control System Designer |
 
 `V.library` also holds the hop, orbital-booster and Starship numbers from `rocket_params.m` (masses, thrust, diameter, length, gimbal limit, `attWn`, `attZeta`, engine counts). The flight-condition table uses Super Heavy. Point a new condition at `V.library.hop` or `V.library.booster` if you want those vehicles on the same plant; their ascent states are not in the snapshot table.
 
 ## 9. Assumptions
 
-* Pitch in the plane, plus a lateral acceleration integrated to drift for the load-relief trade. No yaw or roll. The centre of gravity stays at mid-length (fixed until a later mass-properties step).
-* Uniform rod, CG fixed at mid-length, one equivalent nozzle using the whole thrust (`V.gimbalThrustFraction = 1`, matching the companion). A real stack CG sits further aft, which shortens the gimbal arm and can move the static margin. Both are inputs: arm is `length/2`, margin is `staticMarginCal`.
-* The 5 deg and 30 deg sims hold mass, thrust and `q` constant. The margin sweep and the load-relief run follow `mu(t)`, `lambda(t)` and `q(t)` from the trajectory table. The centre of gravity does not move during the burn (left for a later step).
-* No bending, no slosh, no engine-out, no RCS. The companion's RCS covers torque the gimbal cannot; this loop is gimbal only, and the acceleration command is limited to what ±15 deg can produce.
+* Pitch in the plane, plus a lateral acceleration integrated to drift for the load-relief trade. No yaw or roll.
+* One equivalent nozzle using the whole thrust (`V.gimbalThrustFraction = 1`, matching the companion). The CG, inertia and gimbal arm come from the LOX/CH4 layout in `vehicle_mass_properties`, not from `m*L^2/12`. The centre of pressure is fixed at the station `staticMarginCal` used to describe when the CG was at mid-length. Mixture ratio 3.6, LOX density 1141 kg/m³ and methane density 423 kg/m³ are layout assumptions; they are not in `rocket_params.m`.
+* The 5 deg and 30 deg sims hold mass, thrust and `q` constant. The margin sweep and the load-relief run follow `mu(t)`, `lambda(t)` and `q(t)`. The centre of gravity moves with the tanks on the structure survey.
+* Slosh is one pendulum per tank (NASA SP-106) with baffle damping 0.05. Bending is two free-free modes, 3.5 Hz on the full stack at liftoff, damping 0.01, with a notch on the sensed pitch and rate. Both are in the linear margins. The Simulink time response is still the rigid body plus that notch, plus the load-relief and drift paths. No engine-out and no RCS. The acceleration command is limited to what ±15 deg can produce. Grid fins are the next step; until then a high-q brake with the CG aft of the centre of pressure needs the aero gain scale.
 * No Simulink Control Design. The linear model is written with `tf` / `feedback`, not linearised out of the diagram. The diagram uses `sin`, so its small-signal gain at zero gimbal is the linear `mu`.
 * Actuator bandwidth, rate limit, delay, `C_Nα` and static margin are assumptions. Thrust, mass, geometry, throttle limits and the 15 deg stop are companion numbers.
 
@@ -316,7 +342,8 @@ This repo was written and the algebra was checked with NumPy (frequency response
 5. **Misalignment and open-loop drift.** On Disturbances, gimbal ends near −0.5 deg and the dashed linear pitch is close to the solid one. The uncontrolled max-q trace walks away from 1 deg, and the closed-loop trace holds.
 5b. **Load relief.** On Load relief, solid drift is the correction on and dashed is the correction off, for `lr_blend` 0, 0.5 and 1. Your last run is the reference: at 0.5, peak q·alpha about 64 kPa·deg, peak drift about 1220 m, final drift about 770 m, gimbal about 0.29 deg; at 1, about 30 kPa·deg, 3020 m, 2960 m and 0.56 deg. There is no "closed-loop system is unstable" warning. The outer-loop lines say `stable` and give a rightmost real part near −0.02. A `REVIEW` on those lines means the Padé orders disagreed or a closed-loop pole is not in the left half-plane.
 6. **Bode tab.** Three loop gains, circles at the gain crossover, squares at the upward gain-margin frequency, legend showing about 64 deg and 19 dB.
-6b. **Along the flight.** The scheduled curve stays near 64 deg and 19.4 dB, with 0 samples under the floor. The fixed liftoff-gain curve drops under the red floor in boostback (worst about 5 deg and 0.8 dB near t = 185 s). The printed worst-case lines should match that picture within a few tenths. Expect more fixed-gain samples under the floor than the previous 11, because `Kd` is 2.
+6b. **Along the flight.** The rigid scheduled curve stays near 64 deg on ascent and drops at brake ignition (about −60 deg near t = 399 s), because the CG is no longer at mid-length. The fixed liftoff-gain curve still drops in boostback. The printed worst-case lines should match that picture within a few tenths.
+6c. **Structure & slosh.** CG and arm move during ascent, inertia drops at staging, slosh sits near 0.4 Hz early and the bending curves sit above the crossover. The Bode shows the liftoff peak without the notch and the same curve with it, under 0 dB at 3.5 Hz. Margins with the notch stay near 60 deg until the brake. The Stats tab has the same CG, frequency and margin numbers under the main table.
 7. **Apps.** `open_pitch_tuner("pid", "max-q")` opens PID Tuner. `open_pitch_tuner("designer", "liftoff")` opens Control System Designer. The plant is SISO, stable in closed loop, phase margin near 64 deg.
 8. **Model.** `open_system("boosterPitchTVC")` shows Controller, Actuator and Plant. Scopes exist. Pressing Run with a fresh MATLAB session (no variables) still simulates liftoff, because of `pitch_model_init`.
 
@@ -333,16 +360,17 @@ Roughly in the order they build on this loop:
 | Yaw, and roll by differential gimbal | Same plant on the other axes. Roll needs a second actuator path; the companion is planar and has no roll state. |
 | Landing-burn guidance around this loop | The companion's `landingAccel` commands pitch (and throttle). Close it outside this attitude loop and keep the 15 deg / 30 deg tilt limits (`maxTiltDeg` is 15 on the hop and 30 on Super Heavy). |
 | Schedule `mu` and `lambda` along the flight | Done for this pitch loop (`flight_margin_schedule`, Simulink lookups, Along the flight tab). |
-| Bending modes | A couple of flexible modes between the actuator and the gyro, with notches. This is where the 6 Hz servo and the 20 ms delay start to fight the structure. |
-| Slosh | A pendulum or a spring-mass in the pitch channel, CG and inertia moving as the tanks drain (`m*L^2/12` will not survive that). |
-| Monte Carlo | The companion already disperses thrust, Isp, drag, dry mass and wind. Repeat that on the margins and on the 30 deg case: delay, `mu`, static margin, rate limit. |
-| Multi-loop tuning | Control System Tuner (`systune`) can tune this PID together with the guidance loop. That needs **Simulink Control Design**, which this project does not require. The plant and the loop transfers here are the starting point. |
+| Bending modes | Done for this pitch loop. Two free-free modes and a scheduled notch. Liftoff bending gain margin is about 9 dB with the notch and about −20 dB without it. |
+| Slosh | Done for this pitch loop. LOX and CH4 pendulums, frequency near the crossover at liftoff, light baffle damping. The phase margin moves by about a degree. |
+| Monte Carlo | Done for this pitch loop. `run_monte_carlo` disperses the companion's thrust, Isp, dry mass and wind, plus arm, inertia, aero, servo and delay. Design-point margins go through `pitch_plant` and `loop_margins`. |
+| Multi-loop tuning | `tune_with_systune` tunes this PID at several flight points with `systune` when that function is on the path, and a bounded search otherwise. It does not need Simulink Design Optimization. |
 | Hop and the orbital booster | `V.library` has their masses, thrust and 6 deg gimbal stop. They need their own liftoff / max-q / landing snapshot; the dynamics functions are the same. |
 
 ## 12. Troubleshooting
 
 | Symptom | What to do |
 |---|---|
+| Want the Monte Carlo or the tuner | `run_monte_carlo`, `tune_with_systune`, `open_pitch_cstuner`. Section 13. |
 | `Undefined function 'vehicle_params'` | Current Folder must be this project. `cd` into it. |
 | `pitch_plant:NeedsCST` or a missing `tf` / `pid` | Control System Toolbox is not on this license. The design scripts need it. |
 | `build_pitch_model:NeedsSimulink` | Simulink is not on this license. `design_pitch_controller(vehicle_params())` still runs. |
@@ -354,3 +382,75 @@ Roughly in the order they build on this loop:
 | `isstable` / internal delays | Fixed on this branch. Stability is a Padé test. Re-run `run_pitch_tvc`. A warning that names Padé means that one call could not use the exact delay. |
 | Tuner step looks worse than `run_pitch_tvc` | The tuner is 1-DOF, with derivative on the error and no prefilter. See section 7. |
 | Build stops on `MinMax`, `Switch` or `Saturation Dynamic` | Those blocks are the governor. A rejected `Criteria`, `Function` or port connection is a real diagram error, not a colour. Cosmetic `set_param` failures only warn. |
+
+## 13. Descent and grid fins
+
+`run_pitch_tvc` now continues past staging through the booster return and adds one **Descent** tab to the same Pitch TVC window. The ascent checklist is unchanged. To run only this part:
+
+```matlab
+run_booster_descent
+```
+
+What it covers, using the committed trajectory (the RK4 twin of `simulateBooster` with the superheavy preset):
+
+| Phase | Engines | Pitch effector |
+|---|---|---|
+| Flip | off | RCS, the companion `tauRCS` (30e6 N·m). Fins have no air up here |
+| Boostback | 13 | TVC only |
+| Coast | off | Grid fins, but dynamic pressure is negligible above about 40 km |
+| Entry | off | Grid fins. This is the unpowered descent below `finAlt` (40 km). There is no entry burn (`engEntry = 0`) |
+| Brake | 13 | TVC and grid fins blended by the acceleration each one can produce |
+| Landing | 3 centre | Same blend, fading to TVC as `q` falls. Catch is at 65 m |
+
+The cascade, the command governor and the back-calculation anti-windup are the ascent law. A mode weight splits the acceleration command. The weight and the `mu` in the divider use the same 0.5 s filter, and each surface command is then rate-limited, so the command and the integrator do not step when the engines light, cut off, or drop from 13 to 3.
+
+Grid-fin numbers are design assumptions on top of the companion's `finCLA = 25 m^2`. Half of that force is the pitch pair, the stop is ±20 deg, the rate stop is ±30 deg/s, and the servo is 2 Hz. The alpha stiffness is a quarter of the control derivative (restoring, because engines-first the fins are the tail). The pitch command stands up from 400 m above the arms and is upright by 150 m: the companion's 20 m tilt fade is faster than this 1 rad/s loop. The 30 deg cap is the companion's `maxTiltDeg`.
+
+A NumPy twin of the fixed-step loop (the Descent tab) gave, approximately: catch error **+1.3 deg**, peak fin **20 deg** with about **8.3 s** on the stop, peak gimbal under **2 deg** and never on the stop. Phase anchors from that twin, same plant and the 20 ms delay:
+
+| Phase | PM | GM up |
+|---|---|---|
+| Flip (RCS) | 62.5 deg | 20.6 dB |
+| Boostback (TVC) | 64.0 deg | 19.4 dB |
+| Entry at peak q | 54.1 deg | 12.9 dB |
+| Brake, blended | 60.9 deg | 18.9 dB |
+| Landing just after 13 to 3 | 62.7 deg | 19.5 dB |
+| Catch | 64.0 deg | 19.4 dB |
+
+`run_booster_descent` reprints these with `loop_margins` (Padé stability on the anchors). Coast above the fins is not claimed: there is no pitch authority. Handoffs in the NumPy twin moved the commands by well under 0.1 deg in any 20 ms sample inside ±1 s of the switch, and the integrator step stayed near 1e-5 rad/s.
+
+New files: `grid_fin_model.m`, `grid_fin_effectiveness.m`, `make_booster_return_trajectory.m`, `descent_targets.m`, `descent_openloop.m`, `descent_controller.m`, `build_descent_model.m`, `descent_model_init.m`, `apply_descent_workspace.m`, `run_booster_descent.m`, `descent_dashboard.m`. `run_pitch_tvc.m` only calls them. The Simulink model is `boosterDescentPitch.slx` (gitignored). If the diagram fails, the warning says so and the Descent tab still shows the fixed-step loop.
+
+The return margins use the tank CG from `vehicle_mass_properties` (not the mid-length rod in the CSV) and add the fin restoring moment to the body stiffness. `aero_gain_scale` multiplies the cascade when that net lambda outruns the nominal loop. The table above is the older fixed-CG check. `run_booster_descent` prints the moving-CG numbers; keep those.
+
+## 14. Monte Carlo and tuning
+
+The dispersed runs and the tuner are separate commands so a normal design check stays short.
+
+```matlab
+run_monte_carlo                          % N = 200, seed 42. About 1 to 3 minutes.
+run_monte_carlo(N=40)                    % a quicker look
+tune_with_systune                        % compare gains, do not write them
+tune_with_systune(apply=true)            % base workspace only, not vehicle_params.m
+tune_with_systune(robustCheck=true)      % N = 40 Monte Carlo of the tuned gains
+open_pitch_cstuner                       % Control System Tuner, goals in the workspace
+```
+
+The controller keeps the nominal `1/mu` schedule. Thrust, inert mass, propellant (`isp`), inertia, CG / gimbal arm, `C_Nα`, static margin, servo bandwidth, gimbal-rate stop, sensor delay and a wind bias hit the plant. Companion 1-sigma values are thrust 2%, Isp 1%, aero coefficient 10% (the companion's drag), dry mass 2% and wind 8 m/s. The 3-sigma half-range is three times that. Servo, delay, CG and static margin are design assumptions, documented in `mc_dispersions`. Reserved rows (`lr_blend`, `sloshFreq`, `sloshMassFrac`, `bendingFreq`, `gridFinEff`) are off until a later step sets `enabled` and a sigma. `mc_realize` copies every knob onto `plant.knobs`.
+
+Pass/fail is 30 deg and 6 dB at liftoff, max-q, landing and eight flight stations, Padé stability at the three design points, and the 5 deg and 30 deg liftoff steps (governor on) staying off the stops. The 30 deg rate check uses the run's own rate stop. A slow draw of that stop is what fails: the governor still asks for about 18 deg/s.
+
+The time response is a 2 ms fixed-step copy of the diagram. On the nominal vehicle it reproduces the published 5 deg row (about 2.8 deg and 10.7 deg/s) and the 30 deg governor-on row (about 6.7 deg, 18.1 deg/s, final near 30.6 deg, stops not touched). `nSimulink` (default 2) re-runs those two nominal cases in `boosterPitchTVC` when Simulink is licensed. `parsim` is used only if you ask for at least four Simulink runs and the Parallel Computing Toolbox license is present; otherwise the cross-check is serial.
+
+`tune_with_systune` does not change the saved gains unless `apply=true`, and even then it only assigns the base workspace. Margins in the printed comparison use `loop_margins` on the exact delay. The tuner model itself uses a 4th-order Padé, because `systune` cannot carry an internal delay into `isstable`. `open_pitch_cstuner` opens the three cascade gains in Control System Tuner as far as that app's constructor allows, and leaves `pitchTunerSoft` and `pitchTunerHard` in the workspace.
+
+To put the Monte Carlo tab on the full Pitch TVC window:
+
+```matlab
+MC = run_monte_carlo(showFigure=false);
+T = tune_with_systune;
+% after run_pitch_tvc has built D, the sims, schedule and traj:
+pitch_dashboard(D, simNominal, simBefore, simAfter, simMis, schedule, traj, MC, T)
+```
+
+`run_monte_carlo` on its own opens the same single Pitch TVC window if that figure is not already up, or adds the tab if it is. The Stats tab gains a pass-rate row and two worst-case rows. Every `uitable` cell is char or numeric. Design-point margins and the stability flag call `pitch_plant` and `loop_margins`. The frequency-grid shortcut is used on the flight stations only after it matches `loop_margins` on the nominal plant.

@@ -1,4 +1,4 @@
-function fig = pitch_dashboard(D, simNominal, simBefore, simAfter, simMis, schedule, traj, simLR, trade, simLRoff)
+function fig = pitch_dashboard(D, simNominal, simBefore, simAfter, simMis, schedule, traj, varargin)
 %PITCH_DASHBOARD  One window for the pitch-TVC runs.
 %
 %   fig = pitch_dashboard(D, simNominal, simBefore, simAfter, simMis, schedule, traj)
@@ -9,7 +9,41 @@ function fig = pitch_dashboard(D, simNominal, simBefore, simAfter, simMis, sched
 %   models are used first; freqresp falls back to rational_delay if a
 %   release refuses them. Step overlays go through step_delay, same as
 %   the checklist. simBefore / simAfter are the 30 deg liftoff step with
-%   the command governor off, then on.
+%   the command governor off, then on. Optional arguments after traj are a
+%   Monte Carlo struct from run_monte_carlo and a tune struct from
+%   tune_with_systune. They add the Monte Carlo tab and two Stats rows.
+
+simLR = {};
+trade = [];
+simLRoff = {};
+mc = [];
+tune = [];
+if ~isempty(varargin)
+    if iscell(varargin{1})
+        simLR = varargin{1};
+        if numel(varargin) >= 2
+            trade = varargin{2};
+        end
+        if numel(varargin) >= 3
+            simLRoff = varargin{3};
+        end
+        if numel(varargin) >= 4
+            mc = varargin{4};
+        end
+        if numel(varargin) >= 5
+            tune = varargin{5};
+        end
+    else
+        mc = varargin{1};
+        if numel(varargin) >= 2
+            tune = varargin{2};
+        end
+    end
+end
+if ~isempty(tune) && ~(isstruct(mc) && isfield(mc, 'passRate'))
+    warning('pitch_dashboard:Tune', ...
+        'The tune struct is drawn on the Monte Carlo tab. Pass the MC struct as well.');
+end
 
 colors = [0.000 0.447 0.741
           0.850 0.325 0.098
@@ -47,16 +81,28 @@ tabStats = uitab(tabs, 'Title', 'Stats');
 tabBode = uitab(tabs, 'Title', 'Bode');
 tabLarge = uitab(tabs, 'Title', '30 deg step');
 tabDist = uitab(tabs, 'Title', 'Disturbances');
-tabLR = uitab(tabs, 'Title', 'Load relief');
+if ~isempty(simLR)
+    tabLR = uitab(tabs, 'Title', 'Load relief');
+end
 tabFlight = uitab(tabs, 'Title', 'Along the flight');
 
 build_responses(tabResp, D, simNominal, colors);
-build_stats(tabStats, D, simNominal, [{simBefore, simAfter}, simLR]);
+build_stats(tabStats, D, simNominal, [{simBefore, simAfter}, simLR], mc);
 build_bode(tabBode, D, colors);
 build_large(tabLarge, D, simBefore, simAfter, colors);
 build_disturbances(tabDist, D, simMis, colors);
-build_load_relief(tabLR, D, simLR, trade, simLRoff);
+if ~isempty(simLR)
+    build_load_relief(tabLR, D, simLR, trade, simLRoff);
+end
 build_flight(tabFlight, D, schedule, traj);
+if isfield(D, 'structure') && ~isempty(D.structure)
+    tabStruct = uitab(tabs, 'Title', 'Structure & slosh');
+    structure_dashboard_tab(tabStruct, D.structure);
+end
+if isstruct(mc) && isfield(mc, 'passRate')
+    tabMC = uitab(tabs, 'Title', 'Monte Carlo');
+    mc_dashboard_tab(tabMC, mc, tune);
+end
 
 fig.Visible = 'on';
 try
@@ -128,9 +174,18 @@ small_legend(axRate, names);
 end
 
 
-function build_stats(parent, D, runs, extras)
-g = uigridlayout(parent, [2 1]);
-g.RowHeight = {100, '1x'};
+function build_stats(parent, D, runs, extras, mc)
+if nargin < 5
+    mc = [];
+end
+hasStructure = isfield(D, 'structure') && ~isempty(D.structure);
+if hasStructure
+    g = uigridlayout(parent, [3 1]);
+    g.RowHeight = {100, '1x', 280};
+else
+    g = uigridlayout(parent, [2 1]);
+    g.RowHeight = {100, '1x'};
+end
 g.ColumnWidth = {'1x'};
 g.Padding = [12 10 12 10];
 g.RowSpacing = 6;
@@ -139,10 +194,20 @@ note = ['5 deg rows: solid is Simulink, dashed is the linear command. ' ...
     'Rise and settling are that linear response. Peaks, time on the stops ' ...
     'and the integrator are Simulink. The 30 deg rows reuse the liftoff ' ...
     'margins, so rise and settling are blank. Stable is the order-6 Padé test.'];
+if isstruct(mc) && isfield(mc, 'passRate')
+    note = [note sprintf([' Monte Carlo pass rate %.1f%% (%d/%d). ' ...
+        'Worst phase margin %.1f deg, worst gain margin %.1f dB, ' ...
+        'worst 30 deg rate-stop dwell %.2f s.'], ...
+        mc.passRate, mc.nPass, mc.N, mc.worst.pm, mc.worst.gm, mc.worst.tOnRate30)];
+end
 lbl = uilabel(g, 'Text', note, 'WordWrap', 'on', 'VerticalAlignment', 'top');
 lbl.Layout.Row = 1;
 lbl.Layout.Column = 1;
-uit = uitable(g, 'Data', cells_for_uitable(stats_table(D, runs, extras)), ...
+statsData = cells_for_uitable(stats_table(D, runs, extras));
+if isstruct(mc) && isfield(mc, 'passRate')
+    statsData = [statsData; mc_summary_rows(mc)];
+end
+uit = uitable(g, 'Data', statsData, ...
     'ColumnName', {'Condition', 'Stable', 'PM [deg]', 'GM up [dB]', 'GM down [dB]', ...
     'wc [rad/s]', 'Rise [s]', 'Overshoot [%]', 'Ts 5% [s]', 'Ts 2% [s]', ...
     'Peak gimbal [deg]', 'Peak rate [deg/s]', 'On angle [s]', 'On rate [s]', ...
@@ -151,6 +216,9 @@ uit = uitable(g, 'Data', cells_for_uitable(stats_table(D, runs, extras)), ...
     'ColumnSortable', true, 'RowName', {}, 'FontSize', 11);
 uit.Layout.Row = 2;
 uit.Layout.Column = 1;
+if hasStructure
+    structure_stats_block(g, D.structure);
+end
 end
 
 
@@ -269,7 +337,8 @@ axMg = next_ax(tl);
 axDr = next_ax(tl, [1 2]);
 flight = match_flight(D, simMis.name);
 tLin = (0:0.02:(simMis.tStop - simMis.misalignTime))';
-y = step_delay(flight.Tdist * flight.mu * deg2rad(simMis.misalignDeg), tLin);
+y = step_delay(response_model(flight, 'TdistNotch', 'Tdist') ...
+    * flight.mu * deg2rad(simMis.misalignDeg), tLin);
 c = colors(2, :);
 plot(axMp, simMis.t, simMis.thetaDeg, 'Color', c, 'LineWidth', 1.3);
 hold(axMp, 'on');
@@ -616,7 +685,7 @@ end
 
 function [tCmd, yDeg] = linear_command(flight, run)
 tLin = (0:0.02:(run.tStop - run.thetaStepTime))';
-y = step_delay(flight.Tcmd, tLin);
+y = step_delay(response_model(flight, 'TcmdNotch', 'Tcmd'), tLin);
 tCmd = tLin + run.thetaStepTime;
 yDeg = y * run.thetaStepDeg;
 end
@@ -624,7 +693,8 @@ end
 
 function [t, yDeg] = linear_gust(flight, gustSpeed)
 t = (0:0.05:40)';
-y = step_delay(flight.Tdist * flight.gustAccPerWind * gustSpeed, t);
+y = step_delay(response_model(flight, 'TdistNotch', 'Tdist') ...
+    * flight.gustAccPerWind * gustSpeed, t);
 yDeg = rad2deg(y);
 end
 
@@ -754,6 +824,15 @@ plot(ax, [t(1) t(end)], [lim lim], ':', 'Color', [0.92 0.94 0.96], ...
     'HandleVisibility', 'off');
 plot(ax, [t(1) t(end)], [-lim -lim], ':', 'Color', [0.92 0.94 0.96], ...
     'HandleVisibility', 'off');
+end
+
+
+function sys = response_model(flight, primary, fallback)
+if isfield(flight, primary) && ~isempty(flight.(primary))
+    sys = flight.(primary);
+else
+    sys = flight.(fallback);
+end
 end
 
 

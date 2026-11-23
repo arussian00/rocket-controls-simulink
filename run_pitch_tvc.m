@@ -21,6 +21,7 @@ V = vehicle_params();
 D = design_pitch_controller(V, plot=false);
 traj = booster_trajectory();
 schedule = flight_margin_schedule(D, V, traj);
+D = structure_flight(D, V, traj);
 mdl = build_pitch_model();
 
 nominal = ["liftoff", "max-q", "landing"];
@@ -88,6 +89,17 @@ apply_pitch_condition(D, "max-q", thetaStepDeg=0, gustSpeed=0, ...
     tStop=D.loadReliefStop, shapeOn=1, lrBlend=D.lrBlend);
 apply_flight_schedule(traj, D, useWind=true);
 print_checks(D, simNominal, simBefore, simAfter, simMis, simLR, outerMargins);
+
+% Step 5. New files own the return; this only calls them and adds one tab.
+fprintf('Simulating booster return (grid fins, descent) ...\n');
+try
+    descent = run_booster_descent(D, V, traj);
+    descent_dashboard(pitchDashboard, descent);
+catch ME
+    warning('run_pitch_tvc:Descent', ...
+        ['Descent step did not finish (%s). The pitch-TVC dashboard is ' ...
+         'unchanged.'], ME.message);
+end
 
 
 %% ------------------------------------------------------------------------
@@ -410,9 +422,20 @@ end
 end
 
 
+function sys = response_model(flight, primary, fallback)
+% The notched command response matches the Simulink sensor notch. Flights
+% built before that field existed keep the rigid Tcmd.
+if isfield(flight, primary) && ~isempty(flight.(primary))
+    sys = flight.(primary);
+else
+    sys = flight.(fallback);
+end
+end
+
+
 function err = linear_error(flight, r)
 tLin = (0:0.01:(r.tStop - r.thetaStepTime))';
-y = step_delay(flight.Tcmd, tLin);
+y = step_delay(response_model(flight, 'TcmdNotch', 'Tcmd'), tLin);
 tCmd = tLin + r.thetaStepTime;
 ySim = interp1(tCmd, y * r.thetaStepDeg, r.t, 'linear', 0);
 mask = r.t >= r.thetaStepTime & r.t <= r.gustTime;
