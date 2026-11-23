@@ -252,9 +252,25 @@ end
 
 
 function style_ax(ax)
+ink = [0.05 0.05 0.05];
 ax.Box = 'on';
 ax.FontSize = 11;
+ax.FontWeight = 'bold';
+ax.Color = [0.07 0.08 0.10];
+ax.XColor = ink;
+ax.YColor = ink;
+ax.GridColor = [0.78 0.81 0.85];
+ax.GridAlpha = 0.35;
 grid(ax, 'on');
+try
+    ax.Title.Color = ink;
+    ax.XLabel.Color = ink;
+    ax.YLabel.Color = ink;
+    ax.Title.FontWeight = 'bold';
+    ax.XLabel.FontWeight = 'bold';
+    ax.YLabel.FontWeight = 'bold';
+catch
+end
 try
     ax.Toolbar.Visible = 'off';
 catch
@@ -267,7 +283,10 @@ try
     lg = legend(ax, names);
     lg.Location = 'best';
     lg.FontSize = 8;
-    lg.Box = 'off';
+    lg.Box = 'on';
+    lg.Color = [1 1 1];
+    lg.TextColor = [0.06 0.06 0.06];
+    lg.EdgeColor = [0.75 0.75 0.75];
 catch
 end
 end

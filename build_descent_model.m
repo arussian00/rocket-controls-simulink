@@ -189,8 +189,10 @@ wire('neg_q/1', 'sat_q/3');
 wire('sat_q/1', 'sum_rate/1');
 wire('int_qf/1', 'sum_rate/2');
 wire('sum_rate/1', 'gain_Kq/1');
+wire('gain_Kq/1', 'prod_Kq/1');
+wire('lu_kG/1', 'prod_Kq/2');
 wire('lu_aMax/1', 'sat_a/1');
-wire('gain_Kq/1', 'sat_a/2');
+wire('prod_Kq/1', 'sat_a/2');
 wire('lu_aMax/1', 'neg_a/1');
 wire('neg_a/1', 'sat_a/3');
 
@@ -199,11 +201,13 @@ wire('sat_q/1', 'sum_qErr/1');
 wire('sum_q/1', 'sum_qErr/2');
 wire('sum_qErr/1', 'gain_Kaw/1');
 wire('sat_a/1', 'sum_aErr/1');
-wire('gain_Kq/1', 'sum_aErr/2');
+wire('prod_Kq/1', 'sum_aErr/2');
 wire('sum_aErr/1', 'gain_KawA/1');
+wire('gain_KawA/1', 'prod_kaw/1');
+wire('lu_invK/1', 'prod_kaw/2');
 wire('gain_KiTh/1', 'sum_idot/1');
 wire('gain_Kaw/1', 'sum_idot/2');
-wire('gain_KawA/1', 'sum_idot/3');
+wire('prod_kaw/1', 'sum_idot/3');
 wire('sum_idot/1', 'int_I/1');
 
 % Allocation, then a rate limit so the command state cannot step.
@@ -265,7 +269,9 @@ names = { ...
     'lu_invF', 'dInvFin'; ...
     'lu_aMax', 'dAMax'; ...
     'lu_eFloor', 'dEFloor'; ...
-    'lu_qFloor', 'dQFloor'};
+    'lu_qFloor', 'dQFloor'; ...
+    'lu_kG', 'dGainScale'; ...
+    'lu_invK', 'dInvGainScale'};
 for k = 1:size(names, 1)
     add_lookup(sub, names{k, 1}, names{k, 2}, [80 20 160 50]);
     add_line(sub, 'clock/1', [names{k, 1} '/1'], 'autorouting', 'on');
@@ -333,6 +339,8 @@ add_sum(sub, 'sum_q', '++', [1080 50 1110 90]);
 add_dynsat(sub, 'sat_q', [1140 45 1200 95]);
 add_sum(sub, 'sum_rate', '+-', [1240 50 1270 90]);
 add_gain(sub, 'gain_Kq', 'dKq', [1300 55 1360 85]);
+add_prod(sub, 'prod_Kq', '**', [1380 45 1420 85]);
+add_prod(sub, 'prod_kaw', '**', [1540 140 1580 180]);
 add_gain(sub, 'neg_a', '-1', [1300 110 1340 140]);
 add_dynsat(sub, 'sat_a', [1400 45 1460 105]);
 

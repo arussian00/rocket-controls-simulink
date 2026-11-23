@@ -42,16 +42,38 @@ ret.q = pick('q_Pa'); ret.q = ret.q(:);
 ret.mass = pick('mass_kg'); ret.mass = ret.mass(:);
 ret.thrust = pick('thrust_N'); ret.thrust = ret.thrust(:);
 ret.nEng = pick('n_eng'); ret.nEng = ret.nEng(:);
-ret.muTvc = pick('mu_rps2'); ret.muTvc = ret.muTvc(:);
-ret.inertia = pick('inertia_kgm2'); ret.inertia = ret.inertia(:);
-ret.cg = pick('cg_from_nose_m'); ret.cg = ret.cg(:);
 ret.length = pick('length_m'); ret.length = ret.length(:);
+
+% The CSV still carries the companion's mid-length rod (arm = L/2).
+% Step 4's tank model is the one the margins use: CG, inertia, gimbal
+% arm, mu and the body aero stiffness all move with the propellant.
+% staticMarginLanding places the centre of pressure where that rod had
+% zero static margin. lambdaBody is positive when the CG has moved aft of it.
+ret.muTvc = zeros(n, 1);
+ret.inertia = zeros(n, 1);
+ret.cg = zeros(n, 1);
+ret.arm = zeros(n, 1);
+ret.lambdaBody = zeros(n, 1);
+ret.staticMarginCal = zeros(n, 1);
+for k = 1:n
+    mp = vehicle_mass_properties(ret.mass(k), ret.thrust(k), ret.q(k), ...
+        "booster", V, V.staticMarginLanding);
+    ret.muTvc(k) = mp.mu;
+    ret.inertia(k) = mp.I;
+    ret.cg(k) = mp.cg;
+    ret.arm(k) = mp.arm;
+    ret.lambdaBody(k) = mp.lambda;
+    ret.staticMarginCal(k) = mp.staticMarginCal;
+end
 
 ret.vh = vertical_rate(ret.t, ret.h);
 ret.vx = sqrt(max(ret.speed.^2 - ret.vh.^2, 0));
 
 [ret.muFin, ret.lambdaFin, ret.finArm] = grid_fin_effectiveness( ...
     G, ret.q, ret.inertia, ret.cg);
+% Body aero (unstable once the CG is aft) plus the fin restoring moment.
+ret.lambdaNet = ret.lambdaBody + ret.lambdaFin;
+ret.gainScale = aero_gain_scale(ret.lambdaNet);
 
 ret.phaseCode = zeros(n, 1);
 for k = 1:n

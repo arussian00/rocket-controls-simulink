@@ -119,7 +119,10 @@ for k = 1:N
     err = shaped - thM;
     qCmd = Kth * err + integ;
     qUsed = clip(qCmd, -qLim, qLim);
-    aRaw = Kq * (qUsed - qf);
+    % aero_gain_scale. k = 1 except where the unstable pole outruns the
+    % nominal loop (the high-q entry and the start of the brake).
+    kG = S.gainScale(k);
+    aRaw = (kG * Kq) * (qUsed - qf);
     if S.aMax(k) > 0
         aSat = clip(aRaw, -S.aMax(k), S.aMax(k));
     else
@@ -135,7 +138,7 @@ for k = 1:N
     rRate = max(aR, 0.2) / G.rcsTau;
     cmdR = cmdR + G.dt * clip(D.shapeKs * (desR - cmdR), -rRate, rRate);
 
-    integ = integ + G.dt * (KiTh * err + Kaw * (qUsed - qCmd) + KawA * (aSat - aRaw));
+    integ = integ + G.dt * (KiTh * err + Kaw * (qUsed - qCmd) + (KawA / kG) * (aSat - aRaw));
 
     [tvAng, tvRate] = step_servo(tvAng, tvRate, cmdT, wnT, V.actZeta, ...
         V.gimbalRate, D.deltaMax, G.dt);
@@ -144,7 +147,7 @@ for k = 1:N
     rcs = rcs + G.dt / G.rcsTau * (cmdR - rcs);
 
     alpha = clip(theta - S.thetaTrim(k), -G.alphaCap, G.alphaCap);
-    aPlant = S.lambdaFin(k) * alpha + S.muFin(k) * fnAng + rcs;
+    aPlant = S.lambdaNet(k) * alpha + S.muFin(k) * fnAng + rcs;
     if S.muTvc(k) > 0
         aPlant = aPlant + S.muTvc(k) * sin(tvAng);
     end
@@ -255,6 +258,8 @@ M.nEng = ret.nEng(keep);
 M.pm = nan(n, 1);
 M.gm = nan(n, 1);
 M.wc = nan(n, 1);
+M.k = ret.gainScale(keep);
+M.lambda = ret.lambdaNet(keep);
 M.controlled = false(n, 1);
 M.floorGm = 6;
 M.floorPm = 30;
@@ -267,7 +272,7 @@ for k = 1:n
     if ~M.controlled(k)
         continue
     end
-    m = loop_at(D, V, G, ret.lambdaFin(i), wt, wf, wr, false);
+    m = loop_at(D, V, G, ret.lambdaNet(i), ret.gainScale(i), wt, wf, wr, false);
     M.pm(k) = m.pm;
     M.gm(k) = m.gmUp;
     M.wc(k) = m.wc;
@@ -280,9 +285,10 @@ if any(M.controlled)
     controlledGm = M.gm;
     controlledGm(~M.controlled) = inf;
     [~, iW] = min(controlledGm);
-    fprintf(['  Along the return, worst controlled GM %.1f dB, PM %.1f deg at t = %.0f s (%s). ' ...
-        'Samples under 6 dB or 30 deg: %d.\n'], ...
-        M.gm(iW), M.pm(iW), M.t(iW), char(M.phase(iW)), M.nBelow);
+    fprintf(['  Along the return, worst controlled GM %.1f dB, PM %.1f deg at t = %.0f s (%s), ' ...
+        'lambda_net %.3f /s^2, gain scale %.2f. Samples under 6 dB or 30 deg: %d.\n'], ...
+        M.gm(iW), M.pm(iW), M.t(iW), char(M.phase(iW)), ...
+        M.lambda(iW), M.k(iW), M.nBelow);
 else
     fprintf('  No return sample had pitch authority.\n');
 end
@@ -344,7 +350,7 @@ for k = 1:size(wanted, 1)
     wc = NaN;
     stable = false;
     if controlled
-        m = loop_at(D, V, G, ret.lambdaFin(i), wt, wf, wr, true);
+        m = loop_at(D, V, G, ret.lambdaNet(i), ret.gainScale(i), wt, wf, wr, true);
         pm = m.pm;
         gm = m.gmUp;
         wc = m.wc;
@@ -405,7 +411,10 @@ end
 end
 
 
-function m = loop_at(D, V, G, lambdaFin, wt, wf, wr, doStable)
+function m = loop_at(D, V, G, lambdaNet, gainScale, wt, wf, wr, doStable)
+% lambdaNet is the body stiffness plus the fin restoring moment. gainScale
+% is aero_gain_scale(lambdaNet): 1 on the ascent-like burns, above 1 when
+% the unstable pole would otherwise sit inside the crossover.
 total = wt + wf + wr;
 if total > 0
     wt = wt / total;
@@ -416,10 +425,12 @@ ActT = tf(V.actWn^2, [1, 2*V.actZeta*V.actWn, V.actWn^2]);
 ActF = tf(G.finWn^2, [1, 2*G.finZeta*G.finWn, G.finWn^2]);
 ActR = tf(1, [G.rcsTau, 1]);
 Act = wt * ActT + wf * ActF + wr * ActR;
-P = tf(1, [1, 0, -lambdaFin]);
-L = D.Ctf * Act * P;
+P = tf(1, [1, 0, -lambdaNet]);
+L = (gainScale * D.Ctf) * Act * P;
 L.InputDelay = V.sensorDelay;
 m = loop_margins(L, checkStability=doStable);
+m.gainScale = gainScale;
+m.lambdaNet = lambdaNet;
 end
 
 
