@@ -11,8 +11,10 @@ function mdl = build_pitch_model()
 %
 %   Controller: load-relief blend of the attitude command, then the
 %   prefilter and a governor that limits how far and how fast that command
-%   can lead the measured pitch. An inner rate loop and an outer attitude
-%   loop (cascade) follow, with back-calculation anti-windup, and 1/mu.
+%   can lead the measured pitch. Sensed pitch and rate pass through a
+%   bending notch (notchNum, notchDen). An inner rate loop and an outer
+%   attitude loop (cascade) follow, with back-calculation anti-windup,
+%   and the 1/mu gain schedule.
 %   Actuator: second order wn, zeta, with integrator saturation for the
 %   gimbal rate and angle limits.
 %   Plant: theta'' = mu*sin(delta + misalign) + lambda*alpha
@@ -138,8 +140,8 @@ function add_controller(mdl)
 %   integ_dot = KiTh*e + Kaw*(q_cmd - q_unsat) + (Kaw/Kq)*(a_sat - a_raw)
 sub = add_empty_subsystem(mdl, 'Controller', [160 80 420 300]);
 paint(sub, 'lightBlue');
-try_set(sub, 'Description', ['Prefilter, command governor, cascade rate and ' ...
-    'attitude loops, 1/mu schedule.']);
+try_set(sub, 'Description', ['Prefilter, bending notch, command governor, ' ...
+    'cascade rate and attitude loops, 1/mu schedule.']);
 
 add_in(sub, 'theta_cmd', 1, [20 28 50 42]);
 add_in(sub, 'theta', 2, [20 118 50 132]);
@@ -155,6 +157,13 @@ add_std('simulink/Continuous/Transport Delay', sub, 'delay_theta', [90 105 180 1
     'DelayTime', 'sensorDelay', 'InitialOutput', '0');
 add_std('simulink/Continuous/Transport Delay', sub, 'delay_q', [90 195 180 235], ...
     'DelayTime', 'sensorDelay', 'InitialOutput', '0');
+% Step 4. Notch on the sensed pitch and rate, after the 20 ms delay.
+% Coefficients are constant during a frozen-condition sim and are retuned
+% along the flight in structure_flight. notchNum = 1 is a unit gain.
+add_std('simulink/Continuous/Transfer Fcn', sub, 'notch_theta', [200 100 300 140], ...
+    'Numerator', 'notchNum', 'Denominator', 'notchDen');
+add_std('simulink/Continuous/Transfer Fcn', sub, 'notch_q', [200 250 300 290], ...
+    'Numerator', 'notchNum', 'Denominator', 'notchDen');
 add_std('simulink/Continuous/Transfer Fcn', sub, 'rate_filter', [220 195 310 235], ...
     'Numerator', '[1]', 'Denominator', '[Tf 1]');
 
@@ -330,7 +339,9 @@ wire('prod_driftCmd/1', 'sum_cmd/2');
 wire('sum_cmd/1', 'cmd_prefilter/1');
 wire('theta/1', 'delay_theta/1');
 wire('q/1', 'delay_q/1');
-wire('delay_q/1', 'rate_filter/1');
+wire('delay_theta/1', 'notch_theta/1');
+wire('delay_q/1', 'notch_q/1');
+wire('notch_q/1', 'rate_filter/1');
 wire('delta/1', 'trim_lpf/1');
 wire('trim_lpf/1', 'abs_trim/1');
 wire('const_dMax/1', 'sum_head/1');
@@ -353,11 +364,11 @@ wire('max_q/1', 'neg_q/1');
 wire('max_e/1', 'neg_e/1');
 
 wire('cmd_prefilter/1', 'sum_lead/1');
-wire('delay_theta/1', 'sum_lead/2');
+wire('notch_theta/1', 'sum_lead/2');
 wire('max_e/1', 'sat_lead/1');
 wire('sum_lead/1', 'sat_lead/2');
 wire('neg_e/1', 'sat_lead/3');
-wire('delay_theta/1', 'sum_target/1');
+wire('notch_theta/1', 'sum_target/1');
 wire('sat_lead/1', 'sum_target/2');
 wire('sum_target/1', 'sum_serr/1');
 wire('int_shaped/1', 'sum_serr/2');
@@ -371,7 +382,7 @@ wire('const_shape/1', 'sw_ref/2');
 wire('cmd_prefilter/1', 'sw_ref/3');
 
 wire('sw_ref/1', 'sum_e/1');
-wire('delay_theta/1', 'sum_e/2');
+wire('notch_theta/1', 'sum_e/2');
 wire('sum_e/1', 'gain_Kth/1');
 wire('sum_e/1', 'gain_KiTh/1');
 wire('gain_Kth/1', 'sum_q/1');
