@@ -9,14 +9,15 @@ function mdl = build_pitch_model()
 %                     ^                                           |
 %                     +---------------- theta, q -----------------+
 %
-%   Controller: command prefilter, then a governor that limits how far
-%   and how fast the pitch command can lead the measured pitch. An inner
-%   rate loop and an outer attitude loop (cascade) follow, with
-%   back-calculation anti-windup, and the 1/mu gain schedule.
+%   Controller: load-relief blend of the attitude command, then the
+%   prefilter and a governor that limits how far and how fast that command
+%   can lead the measured pitch. An inner rate loop and an outer attitude
+%   loop (cascade) follow, with back-calculation anti-windup, and 1/mu.
 %   Actuator: second order wn, zeta, with integrator saturation for the
 %   gimbal rate and angle limits.
-%   Plant: theta'' = mu*sin(delta + misalign) + lambda*theta
-%          + gustAccPerWind*wind.
+%   Plant: theta'' = mu*sin(delta + misalign) + lambda*alpha
+%          alpha = theta - wind/speed
+%          plus a lateral acceleration integrated to drift.
 %
 %   Every numeric setting is a base-workspace name (Kp, mu, ...), filled by
 %   apply_pitch_condition. The file is written to the current folder. It is
@@ -66,9 +67,22 @@ add_actuator(mdl);
 add_plant(mdl);
 add_monitoring(mdl);
 
+% Gust step plus the max-q shear/gust table. Both the plant and the
+% load-relief blend see the same wind.
+add_std('simulink/Sources/Clock', mdl, 'wind_clock', [40 300 80 330]);
+add_lookup(mdl, 'lookup_wind', 'schedWind', [120 290 240 330]);
+add_std('simulink/Sources/Step', mdl, 'gust', [120 350 180 380], ...
+    'Time', 'gustTime', 'Before', '0', 'After', 'gustSpeed');
+add_sum(mdl, 'sum_wind', '++', [280 310 310 360]);
+
 add_line(mdl, 'theta_cmd/1', 'Controller/1', 'autorouting', 'on');
 add_line(mdl, 'Controller/1', 'Actuator/1', 'autorouting', 'on');
 add_line(mdl, 'Actuator/1', 'Plant/1', 'autorouting', 'on');
+add_line(mdl, 'wind_clock/1', 'lookup_wind/1', 'autorouting', 'on');
+add_line(mdl, 'lookup_wind/1', 'sum_wind/1', 'autorouting', 'on');
+add_line(mdl, 'gust/1', 'sum_wind/2', 'autorouting', 'on');
+add_line(mdl, 'sum_wind/1', 'Plant/2', 'autorouting', 'on');
+add_line(mdl, 'sum_wind/1', 'Controller/5', 'autorouting', 'on');
 add_line(mdl, 'Actuator/1', 'Controller/4', 'autorouting', 'on');
 add_line(mdl, 'Plant/1', 'Controller/2', 'autorouting', 'on');
 add_line(mdl, 'Plant/2', 'Controller/3', 'autorouting', 'on');
@@ -87,6 +101,11 @@ add_line(mdl, 'Controller/1', 'log_deltaCmd/1', 'autorouting', 'on');
 add_line(mdl, 'Actuator/2', 'log_rate/1', 'autorouting', 'on');
 add_line(mdl, 'theta_cmd/1', 'log_thetaCmd/1', 'autorouting', 'on');
 add_line(mdl, 'Controller/2', 'log_integ/1', 'autorouting', 'on');
+add_line(mdl, 'Plant/3', 'log_alpha/1', 'autorouting', 'on');
+add_line(mdl, 'Plant/4', 'log_drift/1', 'autorouting', 'on');
+add_line(mdl, 'Plant/4', 'Controller/6', 'autorouting', 'on');
+add_line(mdl, 'Plant/6', 'Controller/7', 'autorouting', 'on');
+add_line(mdl, 'Plant/5', 'log_qAlpha/1', 'autorouting', 'on');
 
 name_line(mdl, 'Controller/1', 'delta_cmd');
 name_line(mdl, 'Actuator/1', 'delta');
@@ -126,8 +145,11 @@ add_in(sub, 'theta_cmd', 1, [20 28 50 42]);
 add_in(sub, 'theta', 2, [20 118 50 132]);
 add_in(sub, 'q', 3, [20 208 50 222]);
 add_in(sub, 'delta', 4, [20 520 50 534]);
+add_in(sub, 'wind', 5, [20 700 50 714]);
+add_in(sub, 'drift', 6, [20 860 50 874]);
+add_in(sub, 'vlat', 7, [20 910 50 924]);
 
-add_std('simulink/Continuous/Transfer Fcn', sub, 'cmd_prefilter', [90 15 180 55], ...
+add_std('simulink/Continuous/Transfer Fcn', sub, 'cmd_prefilter', [420 15 510 55], ...
     'Numerator', '[1]', 'Denominator', '[cmdTau 1]');
 add_std('simulink/Continuous/Transport Delay', sub, 'delay_theta', [90 105 180 145], ...
     'DelayTime', 'sensorDelay', 'InitialOutput', '0');
@@ -135,6 +157,58 @@ add_std('simulink/Continuous/Transport Delay', sub, 'delay_q', [90 195 180 235],
     'DelayTime', 'sensorDelay', 'InitialOutput', '0');
 add_std('simulink/Continuous/Transfer Fcn', sub, 'rate_filter', [220 195 310 235], ...
     'Numerator', '[1]', 'Denominator', '[Tf 1]');
+
+% Load relief. b = lrBlend * clip(q/qEngage, 0, 1).
+% theta_zero = theta_delayed - alpha = wind/speed, the attitude that
+% zeros alpha. Blending toward it cancels the measured theta, so this
+% path does not add loop gain. The governor still sees the result.
+add_lookup(sub, 'lookup_speed', 'schedSpeed', [90 680 210 720]);
+add_lookup(sub, 'lookup_qdyn', 'schedQdyn', [90 740 210 780]);
+add_std('simulink/Sources/Constant', sub, 'const_vfloor', [90 800 170 830], ...
+    'Value', 'lrVfloor');
+add_minmax(sub, 'max_speed', [230 690 280 750]);
+add_std('simulink/Math Operations/Divide', sub, 'div_wind', [310 690 350 730], ...
+    'Inputs', '*/');
+add_std('simulink/Sources/Constant', sub, 'const_qEngage', [230 760 310 790], ...
+    'Value', 'qEngage');
+add_std('simulink/Math Operations/Divide', sub, 'div_q', [340 750 380 790], ...
+    'Inputs', '*/');
+add_std('simulink/Discontinuities/Saturation', sub, 'sat_qsched', [410 745 470 785], ...
+    'UpperLimit', '1', 'LowerLimit', '0');
+add_std('simulink/Math Operations/Gain', sub, 'gain_blend', [500 745 560 775], ...
+    'Gain', 'lrBlend');
+add_sum(sub, 'sum_alpha_lr', '+-', [250 100 280 150]);
+add_sum(sub, 'sum_zero', '+-', [320 90 350 140]);
+add_std('simulink/Sources/Constant', sub, 'const_one', [500 80 560 110], ...
+    'Value', '1');
+add_sum(sub, 'sum_oneB', '+-', [600 70 630 120]);
+add_std('simulink/Math Operations/Product', sub, 'prod_traj', [680 20 720 60], ...
+    'Inputs', '**');
+add_std('simulink/Math Operations/Product', sub, 'prod_zero', [680 90 720 130], ...
+    'Inputs', '**');
+add_sum(sub, 'sum_blend', '++', [760 30 790 90]);
+
+% Drift PD. Authority is (1 - q schedule) so it is off in the max-q bucket
+% and fades in as load relief fades out. The limited command joins the
+% blend before the prefilter, so the governor still shapes it.
+add_std('simulink/Math Operations/Gain', sub, 'gain_driftKy', [90 860 160 890], ...
+    'Gain', 'driftKy');
+add_std('simulink/Math Operations/Gain', sub, 'gain_driftKvy', [90 910 160 940], ...
+    'Gain', 'driftKvy');
+add_sum(sub, 'sum_pd', '++', [200 870 230 930]);
+add_std('simulink/Math Operations/Gain', sub, 'gain_negPd', [260 885 310 915], ...
+    'Gain', '-1');
+add_std('simulink/Sources/Constant', sub, 'const_driftLim', [260 960 340 990], ...
+    'Value', 'driftCmdLimit');
+add_std('simulink/Math Operations/Gain', sub, 'gain_negDriftLim', [360 960 410 990], ...
+    'Gain', '-1');
+add_dynsat(sub, 'sat_drift', [440 870 500 940]);
+add_sum(sub, 'sum_fade', '+-', [560 800 590 850]);
+add_std('simulink/Math Operations/Gain', sub, 'gain_driftOn', [630 805 700 835], ...
+    'Gain', 'driftCorrOn');
+add_std('simulink/Math Operations/Product', sub, 'prod_driftCmd', [760 820 800 860], ...
+    'Inputs', '**');
+add_sum(sub, 'sum_cmd', '++', [860 40 890 90]);
 
 % Authority left after a slow measure of gimbal trim.
 add_std('simulink/Continuous/Transfer Fcn', sub, 'trim_lpf', [90 505 180 545], ...
@@ -215,7 +289,45 @@ add_out(sub, 'delta_cmd', 1, [2120 38 2150 52]);
 add_out(sub, 'integ', 2, [2300 108 2330 122]);
 
 wire = @(src, dst) add_line(sub, src, dst, 'autorouting', 'on');
-wire('theta_cmd/1', 'cmd_prefilter/1');
+wire('clock/1', 'lookup_speed/1');
+wire('clock/1', 'lookup_qdyn/1');
+wire('lookup_speed/1', 'max_speed/1');
+wire('const_vfloor/1', 'max_speed/2');
+wire('wind/1', 'div_wind/1');
+wire('max_speed/1', 'div_wind/2');
+wire('lookup_qdyn/1', 'div_q/1');
+wire('const_qEngage/1', 'div_q/2');
+wire('div_q/1', 'sat_qsched/1');
+wire('sat_qsched/1', 'gain_blend/1');
+wire('delay_theta/1', 'sum_alpha_lr/1');
+wire('div_wind/1', 'sum_alpha_lr/2');
+wire('delay_theta/1', 'sum_zero/1');
+wire('sum_alpha_lr/1', 'sum_zero/2');
+wire('const_one/1', 'sum_oneB/1');
+wire('gain_blend/1', 'sum_oneB/2');
+wire('sum_oneB/1', 'prod_traj/1');
+wire('theta_cmd/1', 'prod_traj/2');
+wire('gain_blend/1', 'prod_zero/1');
+wire('sum_zero/1', 'prod_zero/2');
+wire('prod_traj/1', 'sum_blend/1');
+wire('prod_zero/1', 'sum_blend/2');
+wire('drift/1', 'gain_driftKy/1');
+wire('vlat/1', 'gain_driftKvy/1');
+wire('gain_driftKy/1', 'sum_pd/1');
+wire('gain_driftKvy/1', 'sum_pd/2');
+wire('sum_pd/1', 'gain_negPd/1');
+wire('const_driftLim/1', 'sat_drift/1');
+wire('gain_negPd/1', 'sat_drift/2');
+wire('const_driftLim/1', 'gain_negDriftLim/1');
+wire('gain_negDriftLim/1', 'sat_drift/3');
+wire('const_one/1', 'sum_fade/1');
+wire('sat_qsched/1', 'sum_fade/2');
+wire('sum_fade/1', 'gain_driftOn/1');
+wire('gain_driftOn/1', 'prod_driftCmd/1');
+wire('sat_drift/1', 'prod_driftCmd/2');
+wire('sum_blend/1', 'sum_cmd/1');
+wire('prod_driftCmd/1', 'sum_cmd/2');
+wire('sum_cmd/1', 'cmd_prefilter/1');
 wire('theta/1', 'delay_theta/1');
 wire('q/1', 'delay_q/1');
 wire('delay_q/1', 'rate_filter/1');
@@ -336,58 +448,106 @@ end
 
 
 function add_plant(mdl)
-sub = add_empty_subsystem(mdl, 'Plant', [700 90 920 280]);
+sub = add_empty_subsystem(mdl, 'Plant', [700 90 980 340]);
 % 'lightGreen' is not a Simulink colour name. Use an RGB string, and do
 % not let a rejected colour stop the build.
 paint(sub, '[0.75,0.93,0.75]');
 try_set(sub, 'Description', ['Rigid pitch: theta'''' = mu*sin(delta+mis) + ' ...
-    'lambda*theta + gustAccPerWind*wind.']);
+    'lambda*alpha, alpha = theta - wind/speed. Lateral accel integrates to drift.']);
 
 add_in(sub, 'delta', 1, [30 48 60 62]);
+add_in(sub, 'wind', 2, [30 250 60 264]);
 add_std('simulink/Sources/Step', sub, 'misalign', [30 110 80 140], ...
     'Time', 'misalignTime', 'Before', '0', 'After', 'misRad');
-add_std('simulink/Sources/Step', sub, 'wind', [30 250 80 280], ...
-    'Time', 'gustTime', 'Before', '0', 'After', 'gustSpeed');
 
 add_sum(sub, 'sum_angle', '++', [140 45 170 95]);
 add_std('simulink/Math Operations/Trigonometric Function', sub, 'sin_angle', ...
     [210 55 260 85], 'Operator', 'sin');
-add_std('simulink/Sources/Clock', sub, 'clock', [210 300 250 330]);
-add_lookup(sub, 'lookup_mu', 'schedMu', [280 290 400 330]);
-add_lookup(sub, 'lookup_lambda', 'schedLambda', [400 200 520 240]);
+add_std('simulink/Sources/Clock', sub, 'clock', [140 360 180 390]);
+add_lookup(sub, 'lookup_mu', 'schedMu', [220 300 340 340]);
+add_lookup(sub, 'lookup_lambda', 'schedLambda', [220 360 340 400]);
+add_lookup(sub, 'lookup_speed', 'schedSpeed', [220 420 340 460]);
+add_lookup(sub, 'lookup_qdyn', 'schedQdyn', [220 480 340 520]);
+add_lookup(sub, 'lookup_accT', 'schedAccThrust', [220 540 340 580]);
+add_lookup(sub, 'lookup_accA', 'schedAccAero', [220 600 340 640]);
+add_std('simulink/Sources/Constant', sub, 'const_vfloor', [360 430 440 460], ...
+    'Value', 'lrVfloor');
+add_minmax(sub, 'max_speed', [470 420 520 480]);
+add_std('simulink/Math Operations/Divide', sub, 'div_wind', [560 250 600 290], ...
+    'Inputs', '*/');
+add_sum(sub, 'sum_alpha', '+-', [660 180 690 230]);
 add_std('simulink/Math Operations/Product', sub, 'prod_mu', [430 50 470 90], ...
     'Inputs', '**');
-add_std('simulink/Math Operations/Gain', sub, 'gust_gain', [140 245 220 275], ...
-    'Gain', 'gustAccPerWind');
-add_std('simulink/Math Operations/Product', sub, 'prod_lambda', [560 160 600 200], ...
+add_std('simulink/Math Operations/Product', sub, 'prod_lambda', [760 160 800 200], ...
+    'Inputs', '**');
+add_std('simulink/Math Operations/Trigonometric Function', sub, 'sin_theta', ...
+    [760 300 810 330], 'Operator', 'sin');
+add_std('simulink/Math Operations/Product', sub, 'prod_thrust', [860 300 900 340], ...
+    'Inputs', '**');
+add_std('simulink/Math Operations/Product', sub, 'prod_aero', [860 360 900 400], ...
+    'Inputs', '**');
+add_sum(sub, 'sum_lat', '++', [960 320 990 380]);
+add_std('simulink/Continuous/Integrator', sub, 'int_v', [1040 330 1080 360], ...
+    'InitialCondition', '0');
+add_std('simulink/Continuous/Integrator', sub, 'int_y', [1120 330 1160 360], ...
+    'InitialCondition', '0');
+add_std('simulink/Math Operations/Product', sub, 'prod_qa', [860 200 900 240], ...
     'Inputs', '**');
 
-add_sum(sub, 'sum_qdot', '+++', [420 50 450 120]);
-add_std('simulink/Continuous/Integrator', sub, 'int_q', [500 70 540 100], ...
+add_sum(sub, 'sum_qdot', '++', [860 50 890 110]);
+add_std('simulink/Continuous/Integrator', sub, 'int_q', [940 60 980 90], ...
     'InitialCondition', '0');
-add_std('simulink/Continuous/Integrator', sub, 'int_theta', [600 70 640 100], ...
+add_std('simulink/Continuous/Integrator', sub, 'int_theta', [1020 60 1060 90], ...
     'InitialCondition', '0');
 
-add_out(sub, 'theta', 1, [700 73 730 87]);
-add_out(sub, 'q', 2, [600 140 630 154]);
+add_out(sub, 'theta', 1, [1120 63 1150 77]);
+add_out(sub, 'q', 2, [1020 140 1050 154]);
+add_out(sub, 'alpha', 3, [760 230 790 244]);
+add_out(sub, 'drift', 4, [1200 333 1230 347]);
+add_out(sub, 'qAlpha', 5, [960 203 990 217]);
+add_out(sub, 'vlat', 6, [1120 250 1150 264]);
 
-add_line(sub, 'delta/1', 'sum_angle/1', 'autorouting', 'on');
-add_line(sub, 'misalign/1', 'sum_angle/2', 'autorouting', 'on');
-add_line(sub, 'sum_angle/1', 'sin_angle/1', 'autorouting', 'on');
-add_line(sub, 'clock/1', 'lookup_mu/1', 'autorouting', 'on');
-add_line(sub, 'clock/1', 'lookup_lambda/1', 'autorouting', 'on');
-add_line(sub, 'sin_angle/1', 'prod_mu/1', 'autorouting', 'on');
-add_line(sub, 'lookup_mu/1', 'prod_mu/2', 'autorouting', 'on');
-add_line(sub, 'prod_mu/1', 'sum_qdot/1', 'autorouting', 'on');
-add_line(sub, 'lookup_lambda/1', 'prod_lambda/1', 'autorouting', 'on');
-add_line(sub, 'int_theta/1', 'prod_lambda/2', 'autorouting', 'on');
-add_line(sub, 'prod_lambda/1', 'sum_qdot/2', 'autorouting', 'on');
-add_line(sub, 'wind/1', 'gust_gain/1', 'autorouting', 'on');
-add_line(sub, 'gust_gain/1', 'sum_qdot/3', 'autorouting', 'on');
-add_line(sub, 'sum_qdot/1', 'int_q/1', 'autorouting', 'on');
-add_line(sub, 'int_q/1', 'int_theta/1', 'autorouting', 'on');
-add_line(sub, 'int_theta/1', 'theta/1', 'autorouting', 'on');
-add_line(sub, 'int_q/1', 'q/1', 'autorouting', 'on');
+wirep = @(src, dst) add_line(sub, src, dst, 'autorouting', 'on');
+wirep('delta/1', 'sum_angle/1');
+wirep('misalign/1', 'sum_angle/2');
+wirep('sum_angle/1', 'sin_angle/1');
+wirep('clock/1', 'lookup_mu/1');
+wirep('clock/1', 'lookup_lambda/1');
+wirep('clock/1', 'lookup_speed/1');
+wirep('clock/1', 'lookup_qdyn/1');
+wirep('clock/1', 'lookup_accT/1');
+wirep('clock/1', 'lookup_accA/1');
+wirep('sin_angle/1', 'prod_mu/1');
+wirep('lookup_mu/1', 'prod_mu/2');
+wirep('lookup_speed/1', 'max_speed/1');
+wirep('const_vfloor/1', 'max_speed/2');
+wirep('wind/1', 'div_wind/1');
+wirep('max_speed/1', 'div_wind/2');
+wirep('int_theta/1', 'sum_alpha/1');
+wirep('div_wind/1', 'sum_alpha/2');
+wirep('lookup_lambda/1', 'prod_lambda/1');
+wirep('sum_alpha/1', 'prod_lambda/2');
+wirep('prod_mu/1', 'sum_qdot/1');
+wirep('prod_lambda/1', 'sum_qdot/2');
+wirep('sum_qdot/1', 'int_q/1');
+wirep('int_q/1', 'int_theta/1');
+wirep('int_theta/1', 'theta/1');
+wirep('int_q/1', 'q/1');
+wirep('sum_alpha/1', 'alpha/1');
+wirep('int_theta/1', 'sin_theta/1');
+wirep('lookup_accT/1', 'prod_thrust/1');
+wirep('sin_theta/1', 'prod_thrust/2');
+wirep('lookup_accA/1', 'prod_aero/1');
+wirep('sum_alpha/1', 'prod_aero/2');
+wirep('prod_thrust/1', 'sum_lat/1');
+wirep('prod_aero/1', 'sum_lat/2');
+wirep('sum_lat/1', 'int_v/1');
+wirep('int_v/1', 'int_y/1');
+wirep('int_v/1', 'vlat/1');
+wirep('int_y/1', 'drift/1');
+wirep('lookup_qdyn/1', 'prod_qa/1');
+wirep('sum_alpha/1', 'prod_qa/2');
+wirep('prod_qa/1', 'qAlpha/1');
 end
 
 
@@ -402,6 +562,9 @@ add_log(mdl, 'log_deltaCmd', 'deltaCmd', [980 390 1060 420]);
 add_log(mdl, 'log_rate', 'gimbalRateMeas', [980 430 1060 460]);
 add_log(mdl, 'log_thetaCmd', 'thetaCmd', [980 470 1060 500]);
 add_log(mdl, 'log_integ', 'integ', [980 510 1060 540]);
+add_log(mdl, 'log_alpha', 'alpha', [980 550 1060 580]);
+add_log(mdl, 'log_drift', 'drift', [980 590 1060 620]);
+add_log(mdl, 'log_qAlpha', 'qAlpha', [980 630 1060 660]);
 end
 
 

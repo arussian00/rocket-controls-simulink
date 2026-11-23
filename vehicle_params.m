@@ -118,6 +118,33 @@ V.tStop = 22;
 V.largeStepDeg = 30;                          % big enough to saturate an ungoverned command
 V.largeStepStop = 45;                         % governed 30 deg step needs the extra time
 
+% Load relief. 0 holds the trajectory attitude. 1 commands the attitude
+% that zeros angle of attack. The dynamic-pressure schedule multiplies the
+% knob: full authority once q reaches qEngage, and fading below that, so
+% the blend is off at liftoff and on through the max-q bucket.
+V.lrBlend = 0.5;
+V.qEngage = 12e3;                             % [Pa]
+V.lrVfloor = 30;                              % [m/s] keeps wind/V finite on the pad
+% Crosswind through max-q. The shear reaches 12 m/s at T+46 s and holds.
+% The 1-cosine gust peaks at 9 m/s at T+46 s (starts at 42 s, lasts 8 s).
+V.windShear = 12;                             % [m/s]
+V.windShearTime = 46;                         % [s]
+V.windGust = 9;                               % [m/s] peak of the 1-cosine
+V.windGustStart = 42;                         % [s]
+V.windGustDur = 8;                            % [s]
+V.loadReliefStop = 143;                       % [s] end of ascent, just before the flip
+
+% Drift correction. A lateral PD adds a few degrees to the attitude command
+% after dynamic pressure falls. driftSched = driftCorrOn * (1 - q/qEngage),
+% so the loop is off through the max-q bucket and fades in as load relief
+% fades out. Gains are wn = 0.10 rad/s, zeta = 1 at thrust/mass = 32 m/s^2,
+% the highest acceleration late in ascent (the highest outer-loop gain).
+V.driftCorrOn = 1;                            % 1 on, 0 off
+V.driftKy = 3.13e-4;                          % [rad/m] position gain
+V.driftKvy = 6.25e-3;                         % [rad/(m/s)] velocity gain
+V.driftCmdLimitDeg = 4;                       % [deg]
+V.driftCmdLimit = deg2rad(V.driftCmdLimitDeg);
+
 %% Flight conditions
 % max-q mass, speed and altitude are a snapshot of the companion stack
 % ascent (starshipStack: 33 engines, 75% throttle bucket through Mach 1,
@@ -143,6 +170,10 @@ V.flight = [ ...
         'throttle', 0.70, 'nEng', B.engLand, 'length', B.L, ...
         'staticMarginCal', V.staticMarginLanding, ...
         'note', "3 centre engines, ~55 t propellant, body margin 0")) ];
+
+% qEngage is the schedule. qPeak is the ascent max-q condition, for the report.
+mq = find([V.flight.name] == "max-q", 1);
+V.qPeak = V.flight(mq).q;
 end
 
 
