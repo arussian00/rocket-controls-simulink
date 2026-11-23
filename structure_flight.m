@@ -82,6 +82,7 @@ S.mPhase = traj.phase(keep);
 S.pm = nan(mN, 1);
 S.gm = nan(mN, 1);
 S.wc = nan(mN, 1);
+S.gainScale = nan(mN, 1);
 S.pmBare = nan(mN, 1);
 S.gmBare = nan(mN, 1);
 S.bendGm = nan(mN, 2);
@@ -93,6 +94,7 @@ for k = 1:mN
     S.pm(k) = row.pm;
     S.gm(k) = row.gm;
     S.wc(k) = row.wc;
+    S.gainScale(k) = row.gainScale;
     S.pmBare(k) = row.pmBare;
     S.gmBare(k) = row.gmBare;
     S.bendGm(k, :) = row.bendGm;
@@ -117,8 +119,12 @@ slosh = slosh_model(mp);
 bend = bending_model(mp, V);
 P = flex_pitch_plant(mp, slosh, bend, V);
 N = notch_tf([bend.wn]);
-L = D.Ctf * N * P.sys;
-Lbare = D.Ctf * P.sys;
+% Same acceleration PID, scaled when the unstable pole outruns the
+% nominal 2.1 rad/s loop. Liftoff and max-q stay at k = 1.
+k = aero_gain_scale(mp.lambda);
+C = k * D.Ctf;
+L = C * N * P.sys;
+Lbare = C * P.sys;
 m = loop_margins(L, checkStability=withStability);
 mb = loop_margins(Lbare, checkStability=false);
 row.name = string(name);
@@ -132,6 +138,7 @@ row.ax = mp.ax;
 row.fSlosh = slosh_row(slosh);
 row.fBend = [bend.hz];
 row.wnBend = [bend.wn];
+row.gainScale = k;
 row.pm = m.pm;
 row.gm = m.gmUp;
 row.wc = m.wc;
@@ -218,6 +225,11 @@ w.pm = S.pm(k);
 w.gm = S.gm(k);
 w.bendGm = S.bendGm(k, 1);
 w.lambda = S.mLambda(k);
+if isfield(S, 'gainScale')
+    w.gainScale = S.gainScale(k);
+else
+    w.gainScale = 1;
+end
 end
 
 
@@ -353,14 +365,14 @@ fprintf(['Slosh: NASA SP-106 pendulum, baffle damping %.2f. ' ...
     'Notch depth %.1f dB (zero zeta %.3f, pole zeta %.2f).\n'], ...
     S.sloshZeta, S.f1RefHz, S.notchDepthDb, S.notchZetaZ, S.notchZetaP);
 
-fprintf(['\n%-10s %8s %8s %10s %8s %8s %8s %8s %8s %8s %8s\n'], ...
+fprintf(['\n%-10s %8s %8s %10s %8s %8s %6s %8s %8s %8s %8s %8s\n'], ...
     'Condition', 'CG [m]', 'arm [m]', 'I [1e9]', 'mu', 'SM cal', ...
-    'PM', 'GM', 'bGM1', 'bGM2', 'stable');
+    'k', 'PM', 'GM', 'bGM1', 'bGM2', 'stable');
 for k = 1:numel(S.points)
     p = S.points(k);
-    fprintf('%-10s %8.2f %8.2f %10.3f %8.3f %8.2f %8.1f %8.1f %8.1f %8.1f %8s\n', ...
+    fprintf('%-10s %8.2f %8.2f %10.3f %8.3f %8.2f %6.2f %8.1f %8.1f %8.1f %8.1f %8s\n', ...
         char(p.name), p.cg, p.arm, p.inertia / 1e9, p.mu, p.sm, ...
-        p.pm, p.gm, p.bendGm(1), p.bendGm(2), yesno(p.stable));
+        p.gainScale, p.pm, p.gm, p.bendGm(1), p.bendGm(2), yesno(p.stable));
 end
 p = S.points(1);
 fprintf(['\nLiftoff without the notch: PM %.1f deg, GM %.1f dB, ' ...
@@ -373,15 +385,29 @@ fprintf('Landing slosh:  %s\n', char(S.points(3).slosh));
 fprintf('Landing bending: %.2f Hz and %.2f Hz.\n', ...
     S.points(3).fBend(1), S.points(3).fBend(2));
 
+below = S.pm < 30 | S.gm < 6;
+S.nBelow = nnz(below);
 w = S.worstPm;
 fprintf(['\nWorst phase margin: %.1f deg at t = %.0f s (%s), GM %.1f dB, ' ...
-    'lambda %.3f /s^2, bending GM %.1f dB, stable %s.\n'], ...
-    w.pm, w.t, char(w.phase), w.gm, w.lambda, w.bendGm, yesno(w.stable));
+    'lambda %.3f /s^2, gain scale %.2f, bending GM %.1f dB, stable %s.\n'], ...
+    w.pm, w.t, char(w.phase), w.gm, w.lambda, w.gainScale, w.bendGm, yesno(w.stable));
 w = S.worstGm;
 fprintf(['Worst gain margin:  %.1f dB at t = %.0f s (%s), PM %.1f deg, ' ...
-    'bending GM %.1f dB, stable %s.\n'], ...
-    w.gm, w.t, char(w.phase), w.pm, w.bendGm, yesno(w.stable));
+    'gain scale %.2f, bending GM %.1f dB, stable %s.\n'], ...
+    w.gm, w.t, char(w.phase), w.pm, w.gainScale, w.bendGm, yesno(w.stable));
 w = S.worstBend;
-fprintf('Worst bending GM:   %.1f dB (mode 1) at t = %.0f s (%s), PM %.1f deg, GM %.1f dB.\n\n', ...
+fprintf('Worst bending GM:   %.1f dB (mode 1) at t = %.0f s (%s), PM %.1f deg, GM %.1f dB.\n', ...
     w.bendGm, w.t, char(w.phase), w.pm, w.gm);
+fprintf(['Aero gain scale k = max(1, min(3.2, (sqrt(lambda)/0.88)^2)) on Kp, Ki and Kd. ' ...
+    'Samples under 30 deg or 6 dB: %d of %d.\n'], S.nBelow, numel(S.pm));
+if S.nBelow > 0
+    idx = find(below);
+    fprintf('  Under the floor:\n');
+    for i = 1:numel(idx)
+        j = idx(i);
+        fprintf('    t = %.0f s (%s)  PM %.1f deg  GM %.1f dB  lambda %.3f  k %.2f\n', ...
+            S.mt(j), char(S.mPhase(j)), S.pm(j), S.gm(j), S.mLambda(j), S.gainScale(j));
+    end
+end
+fprintf('\n');
 end
