@@ -10,7 +10,9 @@ function m = drift_correction_margins(D, thrust, mass, mu, lambda)
 %
 %   Tcmd is the attitude command response, prefilter and sensor delay
 %   included. Gain and phase margins use that exact delay. The stable flag
-%   is the Padé pole consensus in loop_margins (orders 4, 6, 8 and 10).
+%   is the balanced Padé consensus in loop_margins (orders 4, 6, 8 and 10,
+%   with a badly scaled high order dropped) plus the exact-delay modulus
+%   margin. The rightmost real part near -Ki/Kp is the attitude integrator.
 
 flight = struct('name', "return", 'mu', mu, 'lambda', lambda);
 P = pitch_plant(flight, D);

@@ -351,9 +351,10 @@ for k = 1:numel(outerMargins)
         flagO = "REVIEW";
     end
     fprintf(['  %s  outer drift loop at t = %.0f s, T/m %.1f m/s^2, ' ...
-        'PM %.1f deg, GM %.1f dB, %s, rightmost Re = %.4f\n'], ...
+        'PM %.1f deg, GM %.1f dB, %s, rightmost Re = %.4f, ' ...
+        'modulus margin %.2f%s\n'], ...
         flagO, outerMargins(k).t, m.thrustOverMass, m.pm, m.gmUp, ...
-        m.stability, m.rightmost);
+        m.stability, m.rightmost, m.modulusMargin, integrator_note(D, m));
 end
 
 fprintf('\nOpen the model with  open_system(''boosterPitchTVC'')\n');
@@ -371,11 +372,40 @@ for k = 1:numel(want)
     rows(k).t = traj.t_s(i); %#ok<AGROW>
     rows(k).phase = traj.phase(i);
     rows(k).margins = m;
+    dropped = '';
+    if isfield(m, 'padeArtifact') && any(m.padeArtifact)
+        dropped = sprintf(', order(s) %s dropped as a Padé artifact', ...
+            strtrim(sprintf('%d ', m.padeOrders(m.padeArtifact))));
+    end
+    byOrder = '';
+    if isfield(m, 'rightmostByOrder') && ~isempty(m.rightmostByOrder)
+        byOrder = sprintf(' [%s]', strtrim(sprintf('%.3g ', m.rightmostByOrder)));
+    end
     fprintf(['Outer drift loop at t = %.0f s (%s), thrust/mass %.1f m/s^2: ' ...
-        'PM %.1f deg, GM %.1f dB, %s, rightmost closed-loop Re = %.4f ' ...
-        '(Padé orders 4, 6, 8, 10).\n'], ...
+        'PM %.1f deg, GM %.1f dB, %s, rightmost closed-loop Re = %.4f%s ' ...
+        '(balanced Padé orders 4, 6, 8, 10%s). Exact-delay modulus margin %.2f.%s\n'], ...
         rows(k).t, rows(k).phase, m.thrustOverMass, m.pm, m.gmUp, ...
-        m.stability, m.rightmost);
+        m.stability, m.rightmost, byOrder, dropped, m.modulusMargin, ...
+        integrator_note(D, m));
+end
+end
+
+
+function note = integrator_note(D, m)
+% The slowest closed-loop pole of the drift loop sits on the attitude
+% integrator (the PI zero at -Ki/Kp). Raising the drift damping does not
+% move it. Say so, so a Re of about -0.02 is not read as a drift mode.
+note = '';
+if ~isfield(D, 'Ki') || ~isfield(D, 'Kp') || ~isfinite(m.rightmost)
+    return
+end
+integ = -D.Ki / max(D.Kp, 1e-9);
+if abs(integ) < 1e-6
+    return
+end
+if abs(m.rightmost - integ) <= 0.25 * abs(integ)
+    note = sprintf([' The rightmost pole tracks the attitude integrator ' ...
+        'at %.3f 1/s, not the drift mode.'], integ);
 end
 end
 

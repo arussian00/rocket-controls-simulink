@@ -15,7 +15,8 @@ colors = [0.000 0.447 0.741
           0.850 0.325 0.098
           0.467 0.674 0.188];
 
-fig = uifigure('Name', 'Pitch TVC', 'Visible', 'off', 'AutoResizeChildren', 'on');
+fig = uifigure('Name', 'Pitch TVC', 'Visible', 'off', 'AutoResizeChildren', 'on', ...
+    'Color', 'w');
 place_figure(fig);
 % A direct uitabgroup on the figure keeps a small pixel position and does
 % not grow when the window is resized. The 1x1 grid is the layout manager.
@@ -94,7 +95,7 @@ for k = 1:numel(runs)
     plot(axGust, tG, yG, 'Color', c, 'LineWidth', 1.3);
     hold(axGust, 'on');
 end
-plot(axPitch, runs{1}.t, runs{1}.thetaCmdDeg, 'k--', 'LineWidth', 0.9, ...
+plot(axPitch, runs{1}.t, runs{1}.thetaCmdDeg, '--', 'Color', [0.92 0.94 0.96], 'LineWidth', 0.9, ...
     'HandleVisibility', 'off');
 
 limit_lines(axGim, runs{1}.t, D.deltaMaxDeg);
@@ -188,8 +189,8 @@ for k = 1:numel(D.flight)
         end
     end
 end
-ym = yline(axMag, 0, 'k:');
-yp = yline(axPh, -180, 'k:');
+ym = yline(axMag, 0, ':', 'Color', [0.92 0.94 0.96]);
+yp = yline(axPh, -180, ':', 'Color', [0.92 0.94 0.96]);
 try
     ym.HandleVisibility = 'off';
     yp.HandleVisibility = 'off';
@@ -220,7 +221,8 @@ axRate = next_ax(tl);
 
 cBefore = colors(2, :);
 cAfter = colors(1, :);
-plot(axPitch, simBefore.t, simBefore.thetaCmdDeg, 'k--', 'LineWidth', 1.1);
+plot(axPitch, simBefore.t, simBefore.thetaCmdDeg, '--', ...
+    'Color', [0.92 0.94 0.96], 'LineWidth', 1.1);
 hold(axPitch, 'on');
 plot(axPitch, simBefore.t, simBefore.thetaDeg, 'Color', cBefore, 'LineWidth', 1.2);
 plot(axPitch, simAfter.t, simAfter.thetaDeg, 'Color', cAfter, 'LineWidth', 1.3);
@@ -280,7 +282,7 @@ small_legend(axMp, {'Simulink', 'linear'});
 plot(axMg, simMis.t, simMis.deltaDeg, 'Color', c, 'LineWidth', 1.3);
 hold(axMg, 'on');
 plot(axMg, [simMis.t(1) simMis.t(end)], ...
-    [-simMis.misalignDeg -simMis.misalignDeg], 'k:');
+    [-simMis.misalignDeg -simMis.misalignDeg], ':', 'Color', [0.92 0.94 0.96]);
 style_ax(axMg);
 ylabel(axMg, 'Gimbal [deg]');
 title(axMg, 'Gimbal trim');
@@ -347,8 +349,8 @@ plot(axTrade, trade.peakDriftOff, trade.peakQaOff, '--', 'LineWidth', 1.1);
 hold(axTrade, 'on');
 plot(axTrade, trade.peakDrift, trade.peakQa, '-o', 'LineWidth', 1.2);
 [~, iMark] = min(abs(trade.blend - trade.current));
-plot(axTrade, trade.peakDrift(iMark), trade.peakQa(iMark), 'ko', ...
-    'MarkerFaceColor', 'k', 'MarkerSize', 8);
+plot(axTrade, trade.peakDrift(iMark), trade.peakQa(iMark), 'o', ...
+    'Color', [0.92 0.94 0.96], 'MarkerFaceColor', [0.92 0.94 0.96], 'MarkerSize', 8);
 xlabel(axTrade, 'Peak drift [m]');
 ylabel(axTrade, 'Peak |q alpha| [kPa deg]');
 title(axTrade, sprintf('Trade, marker at %.1f', trade.current));
@@ -366,7 +368,8 @@ hPm(1) = plot(axPm, S.t, S.pm, 'LineWidth', 1.5);
 hold(axPm, 'on');
 hPm(2) = plot(axPm, S.t, S.pmFixed, 'LineWidth', 1.3);
 hPm(3) = plot(axPm, [S.t(1) S.t(end)], [S.floorPm S.floorPm], 'r--');
-hPm(4) = plot(axPm, tMark, pmMark, 'ko', 'MarkerFaceColor', 'k', 'MarkerSize', 7);
+hPm(4) = plot(axPm, tMark, pmMark, 'o', 'Color', [0.92 0.94 0.96], ...
+    'MarkerFaceColor', [0.92 0.94 0.96], 'MarkerSize', 7);
 if any(S.belowFixed)
     plot(axPm, S.t(S.belowFixed), S.pmFixed(S.belowFixed), 'rx', ...
         'MarkerSize', 8, 'LineWidth', 1.2, 'HandleVisibility', 'off');
@@ -381,7 +384,8 @@ hGm(1) = plot(axGm, S.t, S.gm, 'LineWidth', 1.5);
 hold(axGm, 'on');
 hGm(2) = plot(axGm, S.t, S.gmFixed, 'LineWidth', 1.3);
 hGm(3) = plot(axGm, [S.t(1) S.t(end)], [S.floorGm S.floorGm], 'r--');
-hGm(4) = plot(axGm, tMark, gmMark, 'ko', 'MarkerFaceColor', 'k', 'MarkerSize', 7);
+hGm(4) = plot(axGm, tMark, gmMark, 'o', 'Color', [0.92 0.94 0.96], ...
+    'MarkerFaceColor', [0.92 0.94 0.96], 'MarkerSize', 7);
 if any(S.belowFixed)
     plot(axGm, S.t(S.belowFixed), S.gmFixed(S.belowFixed), 'rx', ...
         'MarkerSize', 8, 'LineWidth', 1.2, 'HandleVisibility', 'off');
@@ -688,7 +692,10 @@ try
     lg = legend(ax, varargin{:});
     lg.Location = 'best';
     lg.FontSize = 8;
-    lg.Box = 'off';
+    lg.Box = 'on';
+    lg.Color = [1 1 1];
+    lg.TextColor = [0.06 0.06 0.06];
+    lg.EdgeColor = [0.75 0.75 0.75];
 catch
 end
 end
@@ -710,9 +717,28 @@ end
 
 
 function style_ax(ax)
+% White figure, near-black bold labels, dark plot interior. Tick labels
+% sit on the white figure, so they stay near-black. The grid is light so
+% it shows on the dark interior.
+ink = [0.05 0.05 0.05];
 ax.Box = 'on';
 ax.FontSize = 11;
+ax.FontWeight = 'bold';
+ax.Color = [0.07 0.08 0.10];
+ax.XColor = ink;
+ax.YColor = ink;
+ax.GridColor = [0.78 0.81 0.85];
+ax.GridAlpha = 0.35;
 grid(ax, 'on');
+try
+    ax.Title.Color = ink;
+    ax.XLabel.Color = ink;
+    ax.YLabel.Color = ink;
+    ax.Title.FontWeight = 'bold';
+    ax.XLabel.FontWeight = 'bold';
+    ax.YLabel.FontWeight = 'bold';
+catch
+end
 try
     ax.Toolbar.Visible = 'off';
 catch
@@ -724,8 +750,10 @@ function limit_lines(ax, t, lim)
 if isempty(t)
     return
 end
-plot(ax, [t(1) t(end)], [lim lim], 'k:', 'HandleVisibility', 'off');
-plot(ax, [t(1) t(end)], [-lim -lim], 'k:', 'HandleVisibility', 'off');
+plot(ax, [t(1) t(end)], [lim lim], ':', 'Color', [0.92 0.94 0.96], ...
+    'HandleVisibility', 'off');
+plot(ax, [t(1) t(end)], [-lim -lim], ':', 'Color', [0.92 0.94 0.96], ...
+    'HandleVisibility', 'off');
 end
 
 
