@@ -20,6 +20,7 @@ uit = uitable(wrap, 'Data', stat_cells(S), ...
     'ColumnSortable', true, 'RowName', {}, 'FontSize', 11);
 uit.Layout.Row = 2;
 uit.Layout.Column = 1;
+apply_plot_theme(parentGrid);
 end
 
 

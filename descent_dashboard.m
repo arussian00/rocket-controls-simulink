@@ -35,6 +35,7 @@ catch ME
     warning('descent_dashboard:Stats', ...
         'Descent numbers were not added to Stats (%s).', ME.message);
 end
+apply_plot_theme(fig);
 drawnow
 end
 
@@ -222,7 +223,8 @@ end
 
 
 function fig = new_window()
-fig = uifigure('Name', 'Pitch TVC', 'Visible', 'off', 'AutoResizeChildren', 'on');
+fig = uifigure('Name', 'Pitch TVC', 'Visible', 'off', 'AutoResizeChildren', 'on', ...
+    'Color', plot_theme().bg);
 try
     scr = get(groot, 'ScreenSize');
     if numel(scr) >= 4 && scr(3) > 400 && scr(4) > 300
@@ -252,20 +254,12 @@ end
 
 
 function style_ax(ax)
-ink = [0.05 0.05 0.05];
+% Bold labels and a hidden toolbar. Colors come from apply_plot_theme.
 ax.Box = 'on';
 ax.FontSize = 11;
 ax.FontWeight = 'bold';
-ax.Color = [0.07 0.08 0.10];
-ax.XColor = ink;
-ax.YColor = ink;
-ax.GridColor = [0.78 0.81 0.85];
-ax.GridAlpha = 0.35;
 grid(ax, 'on');
 try
-    ax.Title.Color = ink;
-    ax.XLabel.Color = ink;
-    ax.YLabel.Color = ink;
     ax.Title.FontWeight = 'bold';
     ax.XLabel.FontWeight = 'bold';
     ax.YLabel.FontWeight = 'bold';
@@ -275,6 +269,7 @@ try
     ax.Toolbar.Visible = 'off';
 catch
 end
+apply_plot_theme(ax);
 end
 
 

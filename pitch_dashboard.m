@@ -50,7 +50,7 @@ colors = [0.000 0.447 0.741
           0.467 0.674 0.188];
 
 fig = uifigure('Name', 'Pitch TVC', 'Visible', 'off', 'AutoResizeChildren', 'on', ...
-    'Color', 'w');
+    'Color', plot_theme().bg);
 place_figure(fig);
 % A direct uitabgroup on the figure keeps a small pixel position and does
 % not grow when the window is resized. The 1x1 grid is the layout manager.
@@ -104,6 +104,7 @@ if isstruct(mc) && isfield(mc, 'passRate')
     mc_dashboard_tab(tabMC, mc, tune);
 end
 
+apply_plot_theme(fig);
 fig.Visible = 'on';
 try
     fig.WindowState = 'maximized';
@@ -787,23 +788,14 @@ end
 
 
 function style_ax(ax)
-% White figure, near-black bold labels, dark plot interior. Tick labels
-% sit on the white figure, so they stay near-black. The grid is light so
-% it shows on the dark interior.
-ink = [0.05 0.05 0.05];
+% Bold labels and a hidden toolbar. apply_plot_theme sets the dark
+% interior, near-white ink and grey grid, and is called again after the
+% titles exist.
 ax.Box = 'on';
 ax.FontSize = 11;
 ax.FontWeight = 'bold';
-ax.Color = [0.07 0.08 0.10];
-ax.XColor = ink;
-ax.YColor = ink;
-ax.GridColor = [0.78 0.81 0.85];
-ax.GridAlpha = 0.35;
 grid(ax, 'on');
 try
-    ax.Title.Color = ink;
-    ax.XLabel.Color = ink;
-    ax.YLabel.Color = ink;
     ax.Title.FontWeight = 'bold';
     ax.XLabel.FontWeight = 'bold';
     ax.YLabel.FontWeight = 'bold';
@@ -813,6 +805,7 @@ try
     ax.Toolbar.Visible = 'off';
 catch
 end
+apply_plot_theme(ax);
 end
 
 

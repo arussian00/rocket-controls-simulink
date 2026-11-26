@@ -408,13 +408,16 @@ end
 
 function plot_design(D)
 names = [D.flight.name];
-figure('Name', 'Pitch TVC loop gain');
+bg = plot_theme().bg;
+
+fig = figure('Name', 'Pitch TVC loop gain', 'Color', bg);
 bode_exact(D.flight(1).L, D.flight(2).L, D.flight(3).L, {0.05, 200});
 grid on
 legend(cellstr(names), 'Location', 'southwest');
 title('Loop gain  a_{cmd} back to a_{cmd}');
+apply_plot_theme(fig);
 
-figure('Name', 'Pitch TVC command step');
+fig = figure('Name', 'Pitch TVC command step', 'Color', bg);
 tCmd = linspace(0, 20, 500);
 hold on
 for k = 1:numel(D.flight)
@@ -426,8 +429,9 @@ xlabel('Time [s]');
 ylabel('Pitch [deg]');
 title(sprintf('Closed-loop response to a %.0f deg command', D.thetaStepDeg));
 legend(cellstr(names), 'Location', 'southeast');
+apply_plot_theme(fig);
 
-figure('Name', 'Pitch TVC disturbance');
+fig = figure('Name', 'Pitch TVC disturbance', 'Color', bg);
 tDist = linspace(0, 30, 600);
 tiledlayout(1, 2);
 nexttile
@@ -451,9 +455,11 @@ grid on
 xlabel('Time [s]');
 ylabel('Pitch [deg]');
 title(sprintf('%.0f m/s gust at max-q', D.gustSpeed));
+apply_plot_theme(fig);
 
-figure('Name', 'Open-loop pitch drift at max-q');
+fig = figure('Name', 'Open-loop pitch drift at max-q', 'Color', bg);
 plot_open_loop_drift(f, D);
+apply_plot_theme(fig);
 end
 
 
@@ -477,6 +483,7 @@ ylabel('Pitch [deg]');
 legend('Open loop', 'Closed loop (rigid body)', 'Location', 'northwest');
 title(sprintf('Max-q, 1 deg initial pitch, unstable pole %.3f rad/s', ...
     flight.unstablePole));
+apply_plot_theme(gcf);
 end
 
 

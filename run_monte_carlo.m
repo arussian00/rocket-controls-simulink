@@ -644,10 +644,12 @@ if ~isempty(figs)
         tab = uitab(tg(1), 'Title', 'Monte Carlo');
         mc_dashboard_tab(tab, MC);
         append_stats_rows(fig, MC);
+        apply_plot_theme(fig);
         return
     end
 end
-fig = uifigure('Name', 'Pitch TVC', 'Visible', 'off', 'AutoResizeChildren', 'on');
+fig = uifigure('Name', 'Pitch TVC', 'Visible', 'off', 'AutoResizeChildren', 'on', ...
+    'Color', plot_theme().bg);
 root = uigridlayout(fig, [1 1]);
 root.Padding = [0 0 0 0];
 root.RowHeight = {'1x'};
@@ -657,6 +659,7 @@ tabMC = uitab(tabs, 'Title', 'Monte Carlo');
 mc_dashboard_tab(tabMC, MC);
 tabStats = uitab(tabs, 'Title', 'Stats');
 build_standalone_stats(tabStats, MC);
+apply_plot_theme(fig);
 fig.Visible = 'on';
 try
     fig.WindowState = 'maximized';
