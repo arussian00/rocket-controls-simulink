@@ -50,7 +50,7 @@ colors = [0.000 0.447 0.741
           0.467 0.674 0.188];
 
 fig = uifigure('Name', 'Pitch TVC', 'Visible', 'off', 'AutoResizeChildren', 'on', ...
-    'Color', plot_theme().bg);
+    'Color', 'w');
 place_figure(fig);
 % A direct uitabgroup on the figure keeps a small pixel position and does
 % not grow when the window is resized. The 1x1 grid is the layout manager.
@@ -788,9 +788,8 @@ end
 
 
 function style_ax(ax)
-% Bold labels and a hidden toolbar. apply_plot_theme sets the dark
-% interior, near-white ink and grey grid, and is called again after the
-% titles exist.
+% Bold labels and a hidden toolbar. apply_plot_theme keeps the dark
+% interior and grey grid, and picks text color from the backdrop.
 ax.Box = 'on';
 ax.FontSize = 11;
 ax.FontWeight = 'bold';

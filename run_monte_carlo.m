@@ -648,8 +648,7 @@ if ~isempty(figs)
         return
     end
 end
-fig = uifigure('Name', 'Pitch TVC', 'Visible', 'off', 'AutoResizeChildren', 'on', ...
-    'Color', plot_theme().bg);
+fig = uifigure('Name', 'Pitch TVC', 'Visible', 'off', 'AutoResizeChildren', 'on');
 root = uigridlayout(fig, [1 1]);
 root.Padding = [0 0 0 0];
 root.RowHeight = {'1x'};

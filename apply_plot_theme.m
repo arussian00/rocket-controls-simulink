@@ -1,14 +1,17 @@
 function apply_plot_theme(target)
-%APPLY_PLOT_THEME  Near-white text on the dark figure background.
+%APPLY_PLOT_THEME  Text color chosen for contrast with its backdrop.
 %
 %   apply_plot_theme(fig)
 %   apply_plot_theme(ax)
 %
-%   Walks the figure that owns target. Axes stay dark, grid lines stay
-%   grey, and line colors are left alone. Legend objects and their
-%   children are skipped. Legend text, box, edge and font are put back if
-%   an axes color change moved them. Call this after building a figure and
-%   again after any redraw that adds titles, labels, tabs or tables.
+%   Walks the figure that owns target. The axes interior stays dark and
+%   the grid stays grey. Line colors are left alone. Each text color is
+%   near-white or near-black, whichever has the higher WCAG ratio against
+%   the color behind that text (see text_backdrop and text_ink). Tab
+%   labels use the light tab strip, which has no color property. Legend
+%   objects are skipped, and legend text, box, edge and font are restored
+%   if an axes color change moved them. Call this after building a figure
+%   and again after any redraw that adds titles, labels, tabs or tables.
 
 if nargin < 1 || isempty(target) || ~isgraphics(target)
     return
@@ -19,12 +22,18 @@ legs = legend_objects(fig);
 snap = snapshot_legends(legs);
 
 objs = findall(fig);
-for k = 1:numel(objs)
-    obj = objs(k);
-    if ~isgraphics(obj) || in_legend(obj)
-        continue
+for pass = 1:2
+    for k = 1:numel(objs)
+        obj = objs(k);
+        if ~isgraphics(obj) || in_legend(obj)
+            continue
+        end
+        if pass == 1
+            paint_interior(obj, theme);
+        else
+            paint_text(obj);
+        end
     end
-    paint_one(obj, theme);
 end
 restore_legends(legs, snap);
 end
@@ -151,53 +160,60 @@ end
 end
 
 
-function paint_one(obj, theme)
+function paint_interior(obj, theme)
+try
+    kind = get(obj, 'Type');
+catch
+    return
+end
+if any(strcmp(kind, {'axes', 'polaraxes'}))
+    setp(obj, 'Color', theme.bg);
+end
+end
+
+
+function paint_text(obj)
 try
     kind = get(obj, 'Type');
 catch
     return
 end
 switch kind
-    case 'figure'
-        setp(obj, 'Color', theme.bg);
     case {'axes', 'polaraxes'}
-        paint_axes(obj, theme);
+        paint_axes_text(obj);
     case 'colorbar'
-        setp(obj, 'Color', theme.ink);
+        ink = text_ink(text_backdrop(obj));
+        setp(obj, 'Color', ink);
         try
             if isprop(obj, 'Label')
-                setp(obj.Label, 'Color', theme.ink);
+                setp(obj.Label, 'Color', ink);
             end
         catch
         end
     case {'text', 'textbox', 'textboxshape', 'subplottext'}
-        setp(obj, 'Color', theme.ink);
+        setp(obj, 'Color', text_ink(text_backdrop(obj)));
     case {'textarrow', 'textarrowshape'}
-        setp(obj, 'TextColor', theme.ink);
+        setp(obj, 'TextColor', text_ink(text_backdrop(obj)));
     case 'tiledlayout'
-        paint_layout(obj, theme);
+        paint_layout(obj);
     case {'uitab', 'uipanel'}
-        setp(obj, 'ForegroundColor', theme.ink);
-        setp(obj, 'BackgroundColor', theme.bg);
-    case 'uitabgroup'
-        setp(obj, 'ForegroundColor', theme.ink);
-    case 'uigridlayout'
-        setp(obj, 'BackgroundColor', theme.bg);
-    case 'uilabel'
-        setp(obj, 'FontColor', theme.ink);
-        setp(obj, 'BackgroundColor', theme.bg);
+        setp(obj, 'ForegroundColor', text_ink(text_backdrop(obj)));
+    case {'uilabel', 'uibutton', 'uicheckbox', 'uiradiobutton', ...
+            'uidropdown', 'uieditfield', 'uispinner', 'uitextarea', 'uilistbox'}
+        setp(obj, 'FontColor', text_ink(text_backdrop(obj)));
     case 'uitable'
-        paint_table(obj, theme);
+        setp(obj, 'ForegroundColor', text_ink(text_backdrop(obj)));
 end
 end
 
 
-function paint_axes(ax, theme)
-setp(ax, 'Color', theme.bg);
-setp(ax, 'XColor', theme.ink);
-setp(ax, 'YColor', theme.ink);
-setp(ax, 'ZColor', theme.ink);
+function paint_axes_text(ax)
+ink = text_ink(text_backdrop(ax));
+setp(ax, 'XColor', ink);
+setp(ax, 'YColor', ink);
+setp(ax, 'ZColor', ink);
 % Axis color also drives an automatic grid. Put the grey back afterwards.
+theme = plot_theme();
 setp(ax, 'GridColor', theme.grid);
 setp(ax, 'MinorGridColor', theme.grid);
 setp(ax, 'GridAlpha', theme.gridAlpha);
@@ -211,11 +227,11 @@ for name = ["XAxis", "YAxis", "ZAxis"]
         continue
     end
     for r = 1:numel(rulers)
-        setp(rulers(r), 'Color', theme.ink);
-        setp(rulers(r), 'TickLabelColor', theme.ink);
+        setp(rulers(r), 'Color', ink);
+        setp(rulers(r), 'TickLabelColor', ink);
         try
             if isprop(rulers(r), 'Label')
-                setp(rulers(r).Label, 'Color', theme.ink);
+                setp(rulers(r).Label, 'Color', text_ink(text_backdrop(rulers(r).Label)));
             end
         catch
         end
@@ -226,44 +242,30 @@ for name = ["Title", "Subtitle", "XLabel", "YLabel", "ZLabel"]
         continue
     end
     try
-        setp(ax.(name), 'Color', theme.ink);
+        label = ax.(name);
     catch
+        continue
+    end
+    if isgraphics(label)
+        setp(label, 'Color', text_ink(text_backdrop(label)));
     end
 end
 end
 
 
-function paint_layout(obj, theme)
+function paint_layout(obj)
 for name = ["Title", "Subtitle", "XLabel", "YLabel"]
     if ~isprop(obj, name)
         continue
     end
     try
-        setp(obj.(name), 'Color', theme.ink);
+        label = obj.(name);
     catch
+        continue
     end
-end
-end
-
-
-function paint_table(obj, theme)
-setp(obj, 'ForegroundColor', theme.ink);
-if ~assign_ok(obj, 'BackgroundColor', [theme.bg; theme.bg])
-    setp(obj, 'BackgroundColor', theme.bg);
-end
-end
-
-
-function ok = assign_ok(obj, name, value)
-ok = false;
-try
-    if isempty(obj) || ~isprop(obj, name)
-        return
+    if isgraphics(label)
+        setp(label, 'Color', text_ink(text_backdrop(label)));
     end
-    obj.(name) = value;
-    ok = true;
-catch
-    ok = false;
 end
 end
 

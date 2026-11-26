@@ -408,16 +408,15 @@ end
 
 function plot_design(D)
 names = [D.flight.name];
-bg = plot_theme().bg;
 
-fig = figure('Name', 'Pitch TVC loop gain', 'Color', bg);
+fig = figure('Name', 'Pitch TVC loop gain');
 bode_exact(D.flight(1).L, D.flight(2).L, D.flight(3).L, {0.05, 200});
 grid on
 legend(cellstr(names), 'Location', 'southwest');
 title('Loop gain  a_{cmd} back to a_{cmd}');
 apply_plot_theme(fig);
 
-fig = figure('Name', 'Pitch TVC command step', 'Color', bg);
+fig = figure('Name', 'Pitch TVC command step');
 tCmd = linspace(0, 20, 500);
 hold on
 for k = 1:numel(D.flight)
@@ -431,7 +430,7 @@ title(sprintf('Closed-loop response to a %.0f deg command', D.thetaStepDeg));
 legend(cellstr(names), 'Location', 'southeast');
 apply_plot_theme(fig);
 
-fig = figure('Name', 'Pitch TVC disturbance', 'Color', bg);
+fig = figure('Name', 'Pitch TVC disturbance');
 tDist = linspace(0, 30, 600);
 tiledlayout(1, 2);
 nexttile
@@ -457,7 +456,7 @@ ylabel('Pitch [deg]');
 title(sprintf('%.0f m/s gust at max-q', D.gustSpeed));
 apply_plot_theme(fig);
 
-fig = figure('Name', 'Open-loop pitch drift at max-q', 'Color', bg);
+fig = figure('Name', 'Open-loop pitch drift at max-q');
 plot_open_loop_drift(f, D);
 apply_plot_theme(fig);
 end

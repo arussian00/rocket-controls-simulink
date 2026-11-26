@@ -135,7 +135,7 @@ end
 
 
 function style_ax(ax)
-% Bold labels and a hidden toolbar. Colors come from apply_plot_theme.
+% Bold labels and a hidden toolbar. Text color comes from apply_plot_theme.
 ax.Box = 'on';
 ax.FontSize = 11;
 ax.FontWeight = 'bold';

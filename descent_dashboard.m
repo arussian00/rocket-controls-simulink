@@ -223,8 +223,7 @@ end
 
 
 function fig = new_window()
-fig = uifigure('Name', 'Pitch TVC', 'Visible', 'off', 'AutoResizeChildren', 'on', ...
-    'Color', plot_theme().bg);
+fig = uifigure('Name', 'Pitch TVC', 'Visible', 'off', 'AutoResizeChildren', 'on');
 try
     scr = get(groot, 'ScreenSize');
     if numel(scr) >= 4 && scr(3) > 400 && scr(4) > 300
@@ -254,7 +253,7 @@ end
 
 
 function style_ax(ax)
-% Bold labels and a hidden toolbar. Colors come from apply_plot_theme.
+% Bold labels and a hidden toolbar. Text color comes from apply_plot_theme.
 ax.Box = 'on';
 ax.FontSize = 11;
 ax.FontWeight = 'bold';
