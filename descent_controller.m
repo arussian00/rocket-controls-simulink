@@ -5,10 +5,20 @@ function R = descent_controller(D, V, ret)
 %
 %   One acceleration command, the same cascade as design_pitch_controller
 %   (Kq, Kth, KiTh, back-calculation, command governor). A blend weight
-%   splits it across RCS (the flip), TVC and the grid fins. The weight and
-%   the divisor mu are filtered with the same time constant, and each
-%   surface command is then rate-limited, so a mode change does not step
-%   the command or the integrator.
+%   splits it across RCS, TVC and the grid fins. Coast starts on RCS:
+%   after boostback the trim walks off the -90 deg attitude while the
+%   fins still have no air, and a fin that is already short of the
+%   alpha-cap moment at brake ignition cannot recover that angle later.
+%   The weight and the divisor mu are filtered with the same time
+%   constant, and each surface command is then rate-limited, so a mode
+%   change does not step the command or the integrator.
+%
+%   While a surface is inside the last fraction of its stop the aero
+%   gain scale folds back toward 1, the governor floors bleed off, and
+%   a fin that is against the stop hands its share of the command to
+%   TVC. The acceleration the clipped surface commands can no longer
+%   produce is back-calculated into the integrator. On the nominal
+%   return those terms are zero: the fin peaks near 8 deg.
 %
 %   R.sim is the fixed-step nonlinear loop (no Simulink). R.margins is the
 %   linear loop along the return. Stability on the phase anchors uses
@@ -109,8 +119,35 @@ for k = 1:N
     aR = S.aRcs(k) * S.gateR(k);
     aAvail = aT + aF + aR;
 
-    eLim = max(D.shapeE * aAvail, S.eFloor(k));
-    qLim = max(D.shapeQ * aAvail, S.qFloor(k));
+    % Headroom is 1 at the centre and 0 on the stop. A gated-off surface
+    % does not pull the blend down. Nominal headroom stays above
+    % softenHead, so soft = 1 and kG = k and this block matches the
+    % unsaturated law the Simulink diagram integrates.
+    headT = 1;
+    if S.gateT(k) > 0
+        headT = clip((D.deltaMax - abs(tvAng)) / D.deltaMax, 0, 1);
+    end
+    headF = 1;
+    if S.gateF(k) > 0 && S.muFin(k) > G.muFinFloor
+        headF = clip((G.finDeltaMax - abs(fnAng)) / G.finDeltaMax, 0, 1);
+    end
+    wt = S.wTvc(k);
+    wf = S.wFin(k);
+    wr = S.wRcs(k);
+    if S.gateT(k) > 0.5 && S.muTvc(k) > G.muTvcFloor && headF < G.giveHead && wf > 0
+        give = wf * (1 - headF / G.giveHead);
+        wt = wt + give;
+        wf = wf - give;
+    end
+    wsum = wt + wf + wr;
+    if wsum > 1e-9
+        head = (wt * headT + wf * headF + wr) / wsum;
+    else
+        head = 1;
+    end
+    soft = clip((head - 0.05) / (G.softenHead - 0.05), 0, 1);
+    eLim = max(D.shapeE * aAvail, S.eFloor(k) * soft);
+    qLim = max(D.shapeQ * aAvail, S.qFloor(k) * soft);
 
     lead = clip(pref - thM, -eLim, eLim);
     target = thM + lead;
@@ -120,8 +157,11 @@ for k = 1:N
     qCmd = Kth * err + integ;
     qUsed = clip(qCmd, -qLim, qLim);
     % aero_gain_scale. k = 1 except where the unstable pole outruns the
-    % nominal loop (the high-q entry and the start of the brake).
-    kG = S.gainScale(k);
+    % nominal loop (the high-q entry and the start of the brake). Near a
+    % stop the extra gain only drives the command further into the stop,
+    % so it folds back to the liftoff cascade.
+    kNom = S.gainScale(k);
+    kG = 1 + (kNom - 1) * clip(head / G.softenHead, 0, 1);
     aRaw = (kG * Kq) * (qUsed - qf);
     if S.aMax(k) > 0
         aSat = clip(aRaw, -S.aMax(k), S.aMax(k));
@@ -129,16 +169,31 @@ for k = 1:N
         aSat = 0;
     end
 
-    desT = clip(S.wTvc(k) * aSat * S.invTvc(k), -D.deltaMax, D.deltaMax);
-    desF = clip(S.wFin(k) * aSat * S.invFin(k), -G.finDeltaMax, G.finDeltaMax);
-    desR = clip(S.wRcs(k) * aSat, -S.aRcs(k), S.aRcs(k));
+    rawT = wt * aSat * S.invTvc(k);
+    rawF = wf * aSat * S.invFin(k);
+    rawR = wr * aSat;
+    desT = clip(rawT, -D.deltaMax, D.deltaMax);
+    desF = clip(rawF, -G.finDeltaMax, G.finDeltaMax);
+    desR = clip(rawR, -S.aRcs(k), S.aRcs(k));
 
     cmdT = cmdT + G.dt * clip(D.shapeKs * (desT - cmdT), -V.gimbalRate, V.gimbalRate);
     cmdF = cmdF + G.dt * clip(D.shapeKs * (desF - cmdF), -G.finRate, G.finRate);
     rRate = max(aR, 0.2) / G.rcsTau;
     cmdR = cmdR + G.dt * clip(D.shapeKs * (desR - cmdR), -rRate, rRate);
 
-    integ = integ + G.dt * (KiTh * err + Kaw * (qUsed - qCmd) + (KawA / kG) * (aSat - aRaw));
+    % lost is the acceleration the angle clips removed. It is 0 whenever
+    % no command is against its stop, so the integrator matches the
+    % rate-and-accel back-calculation alone on an unsaturated run.
+    lost = 0;
+    if S.invTvc(k) > 0
+        lost = lost + (desT - rawT) / S.invTvc(k);
+    end
+    if S.invFin(k) > 0
+        lost = lost + (desF - rawF) / S.invFin(k);
+    end
+    lost = lost + (desR - rawR);
+    integ = integ + G.dt * (KiTh * err + Kaw * (qUsed - qCmd) ...
+        + (KawA / kG) * (aSat - aRaw) + KawA * lost);
 
     [tvAng, tvRate] = step_servo(tvAng, tvRate, cmdT, wnT, V.actZeta, ...
         V.gimbalRate, D.deltaMax, G.dt);
@@ -319,7 +374,7 @@ G = ret.G;
 wanted = { ...
     1, "flip, RCS"; ...
     2, "boostback, TVC 13"; ...
-    3, "coast, above the fins"; ...
+    3, "coast, RCS"; ...
     4, "entry, peak dynamic pressure"; ...
     5, "brake, TVC+fins"; ...
     6, "landing, 3 engines"; ...
@@ -377,14 +432,17 @@ end
 
 
 function [aMax, wt, wf, wr] = steady_authority(ret, i, D, G)
-w = descent_targets(ret.phaseCode(i), ret.muTvc(i), ret.muFin(i));
+aFin = max(ret.muFin(i), 0) * G.finDeltaMax;
+aRcs = G.tauRCS / max(ret.inertia(i), 1);
+w = descent_targets(ret.phaseCode(i), ret.muTvc(i), ret.muFin(i), ...
+    aFin, aRcs, G.rcsOwnAccel, G.finOwnAccel);
 wt = w(1);
 wf = w(2);
 wr = w(3);
 code = ret.phaseCode(i);
 gateT = code == 2 || code == 5 || code == 6;
 gateF = code == 3 || code == 4 || code == 5 || code == 6;
-gateR = code == 1;
+gateR = code == 1 || wr > 0.05;
 aMax = 0;
 if gateT && ret.muTvc(i) > 0
     aMax = aMax + ret.muTvc(i) * sin(D.deltaMax);
@@ -393,7 +451,7 @@ if gateF
     aMax = aMax + ret.muFin(i) * G.finDeltaMax;
 end
 if gateR
-    aMax = aMax + G.tauRCS / max(ret.inertia(i), 1);
+    aMax = aMax + aRcs;
 end
 end
 

@@ -15,7 +15,11 @@ function k = aero_gain_scale(lambda)
 %   k = max(1, min(3.2, (sqrt(lambda) / 0.88)^2)). Tuned so the brake
 %   (lambda about 2, thrust vectoring) and the fins-only sample just
 %   before it (net lambda about 1.5, after the fin restoring moment)
-%   both clear 30 deg and 6 dB upward.
+%   both clear 30 deg and 6 dB upward. flight_margin_schedule applies
+%   the same k to the rigid scheduled loop. On the committed ascent
+%   lambda stays under 0.01 /s^2, so k is 1 there and those margins
+%   do not move. The descent loop folds this extra gain back to 1
+%   when an effector is inside the last fraction of its stop.
 
 p = sqrt(max(lambda, 0));
 k = (p ./ 0.88) .^ 2;

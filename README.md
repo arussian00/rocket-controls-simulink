@@ -232,7 +232,7 @@ Along the powered flight the notched loop stays near 60 deg and 10–12 dB throu
 
 `make_booster_trajectory` rewrites that file with the companion's `ode45` once `matlab-rocket-sim` is on the path. Until then the RK4 snapshot is what `run_pitch_tvc` loads.
 
-The normalised cascade does not change. The Simulink lookups make `mu`, `lambda` and `1/mu` functions of flight time, so the gimbal gain tracks control effectiveness. Those two coefficients now come from the tank model in section 4b, not from the mid-length rod. On ascent `lambda` is still small next to `mu`, so the rigid scheduled margins stay near **64 deg and 19 dB**. They do not stay there through the brake. At brake ignition `q` is about 277 kPa and the CG is aft of the fixed centre of pressure, and the rigid phase margin goes negative with the flex one (about −60 deg at t = 399 s). A liftoff gain frozen in gimbal units still loses the boostback, because `mu` still grows as the booster gets light. The Along the flight tab draws both rigid curves. The Structure & slosh tab draws the loop with slosh, bending and the notch. `run_pitch_tvc` prints both worst cases.
+The normalised cascade does not change. The Simulink lookups make `mu`, `lambda` and `1/mu` functions of flight time, so the gimbal gain tracks control effectiveness. Those two coefficients now come from the tank model in section 4b, not from the mid-length rod. On ascent `lambda` stays under about 0.01 /s², so `aero_gain_scale` is 1 and the rigid scheduled margins stay near **64 deg and 19 dB**. Through the brake `lambda` reaches about 2 /s². The scheduled loop multiplies the cascade by the same scale the descent law uses, `k = max(1, min(3.2, (sqrt(lambda)/0.88)^2))`, which puts brake ignition near **55 deg and 11 dB** and t = 404 s near **61 deg and 14 dB**. Without that scale the rigid loop at t = 404 s is unstable (about −46 deg and 3 dB). The fixed liftoff-gain curve is not scaled. The Along the flight tab draws both rigid curves. The Structure & slosh tab draws the loop with slosh, bending and the notch. `run_pitch_tvc` prints both worst cases.
 
 ## 6. Simulink model
 
@@ -397,27 +397,20 @@ What it covers, using the committed trajectory (the RK4 twin of `simulateBooster
 |---|---|---|
 | Flip | off | RCS, the companion `tauRCS` (30e6 N·m). Fins have no air up here |
 | Boostback | 13 | TVC only |
-| Coast | off | Grid fins, but dynamic pressure is negligible above about 40 km |
-| Entry | off | Grid fins. This is the unpowered descent below `finAlt` (40 km). There is no entry burn (`engEntry = 0`) |
+| Coast | off | RCS until the grid fins can produce 0.25 rad/s², then the fins. Dynamic pressure is negligible above about 40 km, and RCS is what slews the booster onto the engines-first trim before entry |
+| Entry | off | Grid fins, with RCS only while the fin stop is still below 0.25 rad/s². This is the unpowered descent below `finAlt` (40 km). There is no entry burn (`engEntry = 0`) |
 | Brake | 13 | TVC and grid fins blended by the acceleration each one can produce |
 | Landing | 3 centre | Same blend, fading to TVC as `q` falls. Catch is at 65 m |
 
 The cascade, the command governor and the back-calculation anti-windup are the ascent law. A mode weight splits the acceleration command. The weight and the `mu` in the divider use the same 0.5 s filter, and each surface command is then rate-limited, so the command and the integrator do not step when the engines light, cut off, or drop from 13 to 3.
 
+Leaving the coast on fins alone tumbles the booster. Boostback holds −90 deg. At cutoff the guidance trim is already near −30 deg and keeps rotating toward engines-first, while dynamic pressure is still ~0. The fin stop and the unstable moment both scale with `q`, and at brake ignition the moment at the 0.5 rad alpha cap (about 0.75 rad/s²) is larger than the fin stop (about 0.68 rad/s²), so a vehicle that is still ~60 deg off the trim cannot be recovered by the fins at any altitude. The fin pins at +20 deg for about 60 s, the integrator runs away once the pitch diverges, and the catch error reaches about −673 deg. The fix is to fly that slew on RCS while the fins have no air, then hand the channel to the fins once they can produce 0.25 rad/s². The fin sign is the same as a positive gimbal. It was not the failure.
+
+If a surface does reach the last fraction of its stop, the extra aero gain folds back to 1, the governor floors bleed off, a saturated fin hands its share to TVC, and the acceleration removed by the angle clip is back-calculated into the integrator. On the nominal return the fin peaks near 8 deg, so those terms stay at zero and the Simulink diagram, which integrates the same unsaturated law, still matches the fixed-step loop.
+
 Grid-fin numbers are design assumptions on top of the companion's `finCLA = 25 m^2`. Half of that force is the pitch pair, the stop is ±20 deg, the rate stop is ±30 deg/s, and the servo is 2 Hz. The alpha stiffness is a quarter of the control derivative (restoring, because engines-first the fins are the tail). The pitch command stands up from 400 m above the arms and is upright by 150 m: the companion's 20 m tilt fade is faster than this 1 rad/s loop. The 30 deg cap is the companion's `maxTiltDeg`.
 
-A NumPy twin of the fixed-step loop (the Descent tab) gave, approximately: catch error **+1.3 deg**, peak fin **20 deg** with about **8.3 s** on the stop, peak gimbal under **2 deg** and never on the stop. Phase anchors from that twin, same plant and the 20 ms delay:
-
-| Phase | PM | GM up |
-|---|---|---|
-| Flip (RCS) | 62.5 deg | 20.6 dB |
-| Boostback (TVC) | 64.0 deg | 19.4 dB |
-| Entry at peak q | 54.1 deg | 12.9 dB |
-| Brake, blended | 60.9 deg | 18.9 dB |
-| Landing just after 13 to 3 | 62.7 deg | 19.5 dB |
-| Catch | 64.0 deg | 19.4 dB |
-
-`run_booster_descent` reprints these with `loop_margins` (Padé stability on the anchors). Coast above the fins is not claimed: there is no pitch authority. Handoffs in the NumPy twin moved the commands by well under 0.1 deg in any 20 ms sample inside ±1 s of the switch, and the integrator step stayed near 1e-5 rad/s.
+A NumPy twin of the fixed-step loop (the Descent tab), with the tank CG and this RCS coast blend, gave: catch error **+0.49 deg**, peak fin **8.0 deg** and **0 s** on the angle stop (0.17 s on the rate stop), peak gimbal **4.9 deg** and never on the stop. The worst controlled sample is the fins-only point at the end of entry, about **45 deg and 7.5 dB** at t = 399 s. Brake ignition on the blended loop is about **53 deg and 11 dB**. `run_booster_descent` reprints the anchors with `loop_margins` (Padé stability). The 2 ms command step stays inside the checklist (0.028 deg TVC, 0.060 deg fin). Over one 20 ms sample the largest handoff move is 0.28 deg of gimbal and 0.60 deg of fin at landing-burn light, which is the fin rate limit held for that sample, not a step in the command state. The integrator step stays near 2e-5 rad/s.
 
 New files: `grid_fin_model.m`, `grid_fin_effectiveness.m`, `make_booster_return_trajectory.m`, `descent_targets.m`, `descent_openloop.m`, `descent_controller.m`, `build_descent_model.m`, `descent_model_init.m`, `apply_descent_workspace.m`, `run_booster_descent.m`, `descent_dashboard.m`. `run_pitch_tvc.m` only calls them. The Simulink model is `boosterDescentPitch.slx` (gitignored). If the diagram fails, the warning says so and the Descent tab still shows the fixed-step loop.
 

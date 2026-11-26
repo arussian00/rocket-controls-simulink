@@ -99,7 +99,9 @@ function add_controller(mdl)
 sub = add_empty_subsystem(mdl, 'Controller', [140 40 380 340]);
 paint(sub, 'lightBlue');
 try_set(sub, 'Description', ...
-    'Governor, cascade, anti-windup, bumpless allocation to RCS, TVC and fins.');
+    ['Governor, cascade, anti-windup, bumpless allocation to RCS, TVC and fins. ' ...
+     'Coast weight is RCS until the fin lookup takes over. Stop softening ' ...
+     'of the aero gain lives in descent_controller and is zero on this run.']);
 
 add_in(sub, 'theta', 1, [20 80 50 94]);
 add_in(sub, 'q', 2, [20 150 50 164]);

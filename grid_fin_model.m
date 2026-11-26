@@ -47,6 +47,22 @@ G.muTvcFloor = 0.05;           % below this, inv(mu) is 0 [1/s^2]
 G.muFinFloor = 1e-4;
 G.authorityMin = 0.05;         % rad/s^2. Below this the phase is not "controlled"
 
+% Coast allocation. Both the fin force and the body aero moment scale with
+% q, so a fin that cannot beat the alpha-cap moment at brake ignition
+% cannot beat it at any dynamic pressure. The slew onto the engines-first
+% trim has to finish while q is still negligible, and only RCS can do that.
+% Below rcsOwnAccel the coast weight is RCS. Above finOwnAccel it is fins.
+G.rcsOwnAccel = 0.05;          % [rad/s^2] fin stop accel, RCS owns the coast
+G.finOwnAccel = 0.25;          % [rad/s^2] fin stop accel, fins own the channel
+
+% Headroom is 1 with the surface centered and 0 on the stop. At and above
+% softenHead the extra aero gain stays on and the governor floors stay at
+% the scheduled values, which is the whole nominal return (the fin peaks
+% near 8 deg, headroom about 0.6). Below it, k folds back toward 1 and the
+% floors bleed off so a pinned surface cannot walk the reference.
+G.softenHead = 0.35;
+G.giveHead = 0.15;             % fin headroom below which its share moves to TVC
+
 % Command-governor floors for this return. The ascent floors (6 deg, 12.5 deg/s)
 % are sized for a 5 deg design step and are reused on burns. On fins alone
 % they would drive the surface into the stop, so the floor drops. The flip
