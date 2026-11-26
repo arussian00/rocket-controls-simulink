@@ -82,6 +82,7 @@ end
 function opened = open_tuner(mdl)
 opened = false;
 blocks = {'Controller/gain_Kq', 'Controller/gain_Kth', 'Controller/gain_KiTh'};
+before = snapshot_figures();
 if exist('slTuner', 'file') == 2 && exist('controlSystemTuner', 'file') == 2
     try
         st = slTuner(mdl, blocks);
@@ -91,6 +92,7 @@ if exist('slTuner', 'file') == 2 && exist('controlSystemTuner', 'file') == 2
         end
         controlSystemTuner(st);
         opened = true;
+        theme_new_figures(before);
         return
     catch ME
         warning('open_pitch_cstuner:SlTuner', ...
@@ -101,9 +103,49 @@ if exist('controlSystemTuner', 'file') == 2
     try
         controlSystemTuner(mdl, blocks);
         opened = true;
+        theme_new_figures(before);
     catch ME
         warning('open_pitch_cstuner:App', ...
             'controlSystemTuner did not open (%s).', ME.message);
+    end
+end
+end
+
+
+function figs = snapshot_figures()
+try
+    figs = findall(0, 'Type', 'figure');
+catch
+    figs = gobjects(0);
+end
+end
+
+
+function theme_new_figures(before)
+drawnow;
+try
+    after = findall(0, 'Type', 'figure');
+catch
+    return
+end
+for k = 1:numel(after)
+    if figure_seen(after(k), before)
+        continue
+    end
+    try
+        apply_plot_theme(after(k));
+    catch
+    end
+end
+end
+
+
+function tf = figure_seen(fig, before)
+tf = false;
+for i = 1:numel(before)
+    if isequal(fig, before(i))
+        tf = true;
+        return
     end
 end
 end

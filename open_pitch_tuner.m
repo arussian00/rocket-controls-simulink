@@ -54,8 +54,10 @@ function open_pid_tuner(G, C)
 % pidTuner accepts an input delay on current releases. A release that
 % refuses it gets a Padé plant, and the warning says the margins in that
 % window are then approximate.
+before = snapshot_figures();
 try
     pidTuner(G, C);
+    theme_new_figures(before);
     return
 catch ME1
 end
@@ -65,6 +67,7 @@ warning('open_pitch_tuner:Pade', ...
      'are not the exact-delay margins from run_pitch_tvc.'], ME1.message);
 try
     pidTuner(rational_delay(G, 4), C);
+    theme_new_figures(before);
 catch ME2
     error('open_pitch_tuner:PidTuner', ...
         'Exact delay failed (%s). Padé approximation also failed (%s).', ...
@@ -76,8 +79,10 @@ end
 function open_designer(G, C)
 % Root locus cannot draw a pure delay, so some releases reject the plant
 % even though the Bode editor could show it. Fall back to Padé.
+before = snapshot_figures();
 try
     controlSystemDesigner(G, C);
+    theme_new_figures(before);
     return
 catch ME1
 end
@@ -86,9 +91,51 @@ warning('open_pitch_tuner:Pade', ...
      'Opening a 4th-order Padé approximation.'], ME1.message);
 try
     controlSystemDesigner(rational_delay(G, 4), C);
+    theme_new_figures(before);
 catch ME2
     error('open_pitch_tuner:Designer', ...
         'Exact delay failed (%s). Padé approximation also failed (%s).', ...
         ME1.message, ME2.message);
+end
+end
+
+
+function figs = snapshot_figures()
+try
+    figs = findall(0, 'Type', 'figure');
+catch
+    figs = gobjects(0);
+end
+end
+
+
+function theme_new_figures(before)
+% The tuner apps draw their own windows. Theme whatever they opened.
+% Legends inside those windows stay as the app drew them.
+drawnow;
+try
+    after = findall(0, 'Type', 'figure');
+catch
+    return
+end
+for k = 1:numel(after)
+    if figure_seen(after(k), before)
+        continue
+    end
+    try
+        apply_plot_theme(after(k));
+    catch
+    end
+end
+end
+
+
+function tf = figure_seen(fig, before)
+tf = false;
+for i = 1:numel(before)
+    if isequal(fig, before(i))
+        tf = true;
+        return
+    end
 end
 end

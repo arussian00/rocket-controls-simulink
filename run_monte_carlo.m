@@ -644,6 +644,7 @@ if ~isempty(figs)
         tab = uitab(tg(1), 'Title', 'Monte Carlo');
         mc_dashboard_tab(tab, MC);
         append_stats_rows(fig, MC);
+        apply_plot_theme(fig);
         return
     end
 end
@@ -657,6 +658,7 @@ tabMC = uitab(tabs, 'Title', 'Monte Carlo');
 mc_dashboard_tab(tabMC, MC);
 tabStats = uitab(tabs, 'Title', 'Stats');
 build_standalone_stats(tabStats, MC);
+apply_plot_theme(fig);
 fig.Visible = 'on';
 try
     fig.WindowState = 'maximized';
