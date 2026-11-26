@@ -4,11 +4,16 @@ function S = flight_margin_schedule(D, V, traj)
 %   S = flight_margin_schedule(D, V, traj)
 %
 %   The scheduled law keeps Kp, Ki, Kd in acceleration units and sets
-%   delta_cmd = a_cmd/mu(t). Its margins move only with lambda(t).
+%   delta_cmd = a_cmd/mu(t). Its margins move with lambda(t). Where the
+%   unstable pole outruns the 2.1 rad/s loop, aero_gain_scale multiplies
+%   the cascade, the same scale the descent loop and the structure
+%   survey use. On the committed trajectory that scale is 1 through
+%   ascent (lambda stays under 0.01 /s^2) and rises only on the brake.
 %   The fixed-gain law freezes the liftoff gimbal gain (multiplies the
-%   loop by mu(t)/mu(0)). Samples are about 4 s apart, and only where
-%   thrust-vector control is active. Stability Padé checks are skipped
-%   on this grid; the 6 dB / 30 deg floor is the flag.
+%   loop by mu(t)/mu(0)) and is not scaled. Samples are about 4 s
+%   apart, and only where thrust-vector control is active. Stability
+%   Padé checks are skipped on this grid; the 6 dB / 30 deg floor is
+%   the flag.
 
 mu0 = traj.mu_rps2(1);
 active = find(traj.tvc_active ~= 0 & traj.mu_rps2 > 1e-3);
@@ -35,6 +40,7 @@ S.gm = nan(n, 1);
 S.wc = nan(n, 1);
 S.pmFixed = nan(n, 1);
 S.gmFixed = nan(n, 1);
+S.k = ones(n, 1);
 S.below = false(n, 1);
 S.belowFixed = false(n, 1);
 S.mu0 = mu0;
@@ -45,7 +51,8 @@ fprintf('Flight-schedule margins at %d powered samples...\n', n);
 for k = 1:n
     flight = struct('name', "sched", 'mu', S.mu(k), 'lambda', S.lambda(k));
     P = pitch_plant(flight, V, lambda=S.lambda(k));
-    m = loop_margins(D.Ctf * P.G, checkStability=false);
+    S.k(k) = aero_gain_scale(S.lambda(k));
+    m = loop_margins(S.k(k) * D.Ctf * P.G, checkStability=false);
     S.pm(k) = m.pm;
     S.gm(k) = m.gmUp;
     S.wc(k) = m.wc;
@@ -63,9 +70,14 @@ S.worstFixed = pack_worst(S, iF, true);
 S.nBelow = nnz(S.below);
 S.nBelowFixed = nnz(S.belowFixed);
 
-fprintf('  Scheduled worst GM %.1f dB, PM %.1f deg at t = %.0f s (%s). Samples under the floor: %d.\n', ...
+flag = "PASS";
+if S.nBelow > 0
+    flag = "REVIEW";
+end
+fprintf('  Scheduled worst GM %.1f dB, PM %.1f deg at t = %.0f s (%s), gain scale %.2f. Samples under the floor: %d.\n', ...
     S.worstScheduled.gm, S.worstScheduled.pm, S.worstScheduled.t, ...
-    S.worstScheduled.phase, S.nBelow);
+    S.worstScheduled.phase, S.k(iS), S.nBelow);
+fprintf('  %s  scheduled margins >= 30 deg and 6 dB on every powered sample\n', flag);
 fprintf('  Fixed liftoff gain worst GM %.1f dB, PM %.1f deg at t = %.0f s (%s). Samples under the floor: %d.\n', ...
     S.worstFixed.gm, S.worstFixed.pm, S.worstFixed.t, ...
     S.worstFixed.phase, S.nBelowFixed);

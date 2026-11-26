@@ -32,11 +32,16 @@ S.phaseCode = round(S.phaseCode);
 
 S.thetaCmd = theta_on_grid(S.phaseCode, S.h, S.vx, S.vh, G);
 S.thetaTrim = atan2(-S.vx, max(abs(S.vh), G.aeroVhFloor));
+S.aRcs = G.tauRCS ./ max(S.inertia, 1);
 
 % Steady targets, then the blend filter. g is the exact discrete pole.
+% Coast and entry pass the fin-stop acceleration so RCS holds the trim
+% until the fins can actually move the booster.
 wTgt = zeros(n, 3);
+aFinStop = max(S.muFin, 0) * G.finDeltaMax;
 for k = 1:n
-    wTgt(k, :) = descent_targets(S.phaseCode(k), S.muTvc(k), S.muFin(k)).';
+    wTgt(k, :) = descent_targets(S.phaseCode(k), S.muTvc(k), S.muFin(k), ...
+        aFinStop(k), S.aRcs(k), G.rcsOwnAccel, G.finOwnAccel).';
 end
 if n >= 2
     dt = median(diff(tq));
@@ -78,7 +83,6 @@ S.gateT = double(S.phaseCode == 2 | S.phaseCode == 5 | S.phaseCode == 6 | S.wTvc
 S.gateF = double(S.phaseCode == 3 | S.phaseCode == 4 | S.phaseCode == 5 | S.phaseCode == 6);
 S.gateR = double(S.phaseCode == 1 | S.wRcs > 0.02);
 
-S.aRcs = G.tauRCS ./ max(S.inertia, 1);
 S.aMax = zeros(n, 1);
 useT = S.gateT > 0 & S.muTvc > 0;
 S.aMax(useT) = S.aMax(useT) + S.muTvc(useT) * sin(D.deltaMax);

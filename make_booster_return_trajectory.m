@@ -91,7 +91,10 @@ ret.wTvc = zeros(n, 1);
 ret.wFin = zeros(n, 1);
 ret.wRcs = zeros(n, 1);
 for k = 1:n
-    w = descent_targets(ret.phaseCode(k), ret.muTvc(k), ret.muFin(k));
+    aFin = max(ret.muFin(k), 0) * G.finDeltaMax;
+    aRcs = G.tauRCS / max(ret.inertia(k), 1);
+    w = descent_targets(ret.phaseCode(k), ret.muTvc(k), ret.muFin(k), ...
+        aFin, aRcs, G.rcsOwnAccel, G.finOwnAccel);
     ret.wTvc(k) = w(1);
     ret.wFin(k) = w(2);
     ret.wRcs(k) = w(3);

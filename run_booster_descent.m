@@ -75,12 +75,47 @@ for k = 1:numel(sim.transitions)
         tr.name, tr.t, tr.maxDTvcDeg, tr.maxDFinDeg, tr.maxDInteg, tr.maxDThetaDeg);
 end
 
+% Catch and time-on-stop are separate lines so a tumble (catch of
+% hundreds of degrees, fin pinned for a minute) cannot hide inside the
+% summary. A brief rate-stop touch during a slew is not a pin.
+catchLim = 3;
+stopLim = 1.0;
+rateLim = 0.5;
+flagC = "PASS";
+if abs(sim.catchErrDeg) > catchLim
+    flagC = "REVIEW";
+end
+fprintf('  %s  catch |attitude error| %.2f deg (limit %.0f)\n', ...
+    flagC, abs(sim.catchErrDeg), catchLim);
+flagS = "PASS";
+if sim.tOnFin > stopLim || sim.tOnTvc > stopLim ...
+        || sim.tOnFinRate > rateLim || sim.tOnTvcRate > rateLim
+    flagS = "REVIEW";
+end
+fprintf(['  %s  time on stop  fin %.2f s, fin rate %.2f s, TVC %.2f s, ' ...
+    'TVC rate %.2f s (limits %.1f s angle, %.1f s rate)\n'], ...
+    flagS, sim.tOnFin, sim.tOnFinRate, sim.tOnTvc, sim.tOnTvcRate, stopLim, rateLim);
+
 flag = "PASS";
-if abs(sim.catchErrDeg) > 3 || sim.peakFinDeg > sim.finLimitDeg + 0.05 ...
+if flagC == "REVIEW" || flagS == "REVIEW" ...
+        || sim.peakFinDeg > sim.finLimitDeg + 0.05 ...
         || sim.peakTvcDeg > sim.tvcLimitDeg + 0.05 ...
         || sim.maxStepTvcDeg > 0.05 || sim.maxStepFinDeg > 0.07 ...
         || sim.maxStepInteg > 1e-3 || R.margins.nBelow > 0
     flag = "REVIEW";
+end
+brake = R.margins.controlled & R.margins.t >= 399 & R.margins.t <= 410;
+if any(brake)
+    flagB = "PASS";
+    if any(R.margins.below(brake))
+        flagB = "REVIEW";
+        flag = "REVIEW";
+    end
+    idx = find(brake);
+    [~, jRel] = min(R.margins.pm(idx));
+    j = idx(jRel);
+    fprintf('  %s  brake window t = 399-410 s worst PM %.1f deg, GM %.1f dB at t = %.0f s\n', ...
+        flagB, R.margins.pm(j), R.margins.gm(j), R.margins.t(j));
 end
 for k = 1:numel(R.margins.anchors)
     a = R.margins.anchors(k);
